@@ -1,0 +1,136 @@
+{
+  "cases": {
+    "circle_arcs": {
+      "bytes": 1054,
+      "input": "inputs/circle_arcs.gc",
+      "kwargs": {},
+      "output": "outputs/circle_arcs.m20",
+      "sha256": "b60d64078e8c2454a5fac92b0cce9d5b3fc06fce70ff88e1a541bd35721bcbc9"
+    },
+    "flip_y": {
+      "bytes": 256,
+      "input": "inputs/two_lines_hw_proven.gc",
+      "kwargs": {
+        "flip_y": true,
+        "optimise": false
+      },
+      "output": "outputs/flip_y.m20",
+      "sha256": "b58ab6b8444e67c355fc2b98e6a2ddaa5998d46be2854bd18f202c7b6b2f2bcd"
+    },
+    "inches": {
+      "bytes": 214,
+      "input": "inputs/inches.gc",
+      "kwargs": {
+        "units": "inch"
+      },
+      "output": "outputs/inches.m20",
+      "sha256": "e9912b44251be21d859ef5c41bc06f42204d19de2108b27c003b5b5ebe9c3b24"
+    },
+    "line_single": {
+      "bytes": 202,
+      "input": "inputs/line_single.gc",
+      "kwargs": {},
+      "output": "outputs/line_single.m20",
+      "sha256": "99dfd770ca7384e7605a0f199d6acc0a89e4c1742776ae2ec12086accda5c323"
+    },
+    "line_single_raw": {
+      "bytes": 202,
+      "input": "inputs/line_single.gc",
+      "kwargs": {
+        "optimise": false
+      },
+      "output": "outputs/line_single_raw.m20",
+      "sha256": "99dfd770ca7384e7605a0f199d6acc0a89e4c1742776ae2ec12086accda5c323"
+    },
+    "mixed_arcs": {
+      "bytes": 1078,
+      "input": "inputs/mixed_arcs.gc",
+      "kwargs": {},
+      "output": "outputs/mixed_arcs.m20",
+      "sha256": "c875878fbb8e29c5593f134b3e84ceb32e8c4ac136ed68529e1aca6ed077c89d"
+    },
+    "origin_offset": {
+      "bytes": 202,
+      "input": "inputs/line_single.gc",
+      "kwargs": {
+        "optimise": false,
+        "origin": [
+          5.0,
+          5.0
+        ]
+      },
+      "output": "outputs/origin_offset.m20",
+      "sha256": "12dc4d4606e07cd6c1e7372027700e1dde689b10b733d955e44f441ec09e3d4c"
+    },
+    "relative_mode": {
+      "bytes": 238,
+      "input": "inputs/relative_mode.gc",
+      "kwargs": {},
+      "output": "outputs/relative_mode.m20",
+      "sha256": "760af956582e8441f2c5cfe7b8bec51f55f9d8427b79727d93be2160c66c83b3"
+    },
+    "scaled_2x": {
+      "bytes": 202,
+      "input": "inputs/line_single.gc",
+      "kwargs": {
+        "optimise": false,
+        "scale": 2.0
+      },
+      "output": "outputs/scaled_2x.m20",
+      "sha256": "c0ad2e892e395e43b361a444311082e73309947f4e2153de855b7707ce27b564"
+    },
+    "scattered_no_merge": {
+      "bytes": 364,
+      "input": "inputs/scattered_strokes.gc",
+      "kwargs": {
+        "merge": false
+      },
+      "output": "outputs/scattered_no_merge.m20",
+      "sha256": "b5a30e181c0b9fcc51b84be77d10142914748fa01c583c80efb2dc8c9698692c"
+    },
+    "scattered_optimised": {
+      "bytes": 364,
+      "input": "inputs/scattered_strokes.gc",
+      "kwargs": {},
+      "output": "outputs/scattered_optimised.m20",
+      "sha256": "b5a30e181c0b9fcc51b84be77d10142914748fa01c583c80efb2dc8c9698692c"
+    },
+    "scattered_raw": {
+      "bytes": 364,
+      "input": "inputs/scattered_strokes.gc",
+      "kwargs": {
+        "optimise": false
+      },
+      "output": "outputs/scattered_raw.m20",
+      "sha256": "92a988029d1046b0010dc0fedfc6bbefa052e293e3604491e00c586b1c3a2165"
+    },
+    "speed_40": {
+      "bytes": 202,
+      "input": "inputs/line_single.gc",
+      "kwargs": {
+        "optimise": false,
+        "speed": 40
+      },
+      "output": "outputs/speed_40.m20",
+      "sha256": "13cbde1526e6d3e300db91c21c2735cd43478eb9ca6e6c68cba3fd18b641ebf3"
+    },
+    "square_20mm": {
+      "bytes": 238,
+      "input": "inputs/square_20mm.gc",
+      "kwargs": {},
+      "output": "outputs/square_20mm.m20",
+      "sha256": "d6c0041b35d86343f3d299967c69995c6f88472091d13f80fdd7806901aced7e"
+    },
+    "two_lines_hw_proven": {
+      "bytes": 256,
+      "input": "inputs/two_lines_hw_proven.gc",
+      "kwargs": {
+        "optimise": false
+      },
+      "output": "outputs/two_lines_hw_proven.m20",
+      "sha256": "e29082c8417ab45f73e95d8e42c7e97f7105dc8f838e46fe4f0858057e6225b7"
+    }
+  },
+  "format": "GTS",
+  "normative_spec": "docs/GTS_FORMAT.md"
+}

@@ -1,0 +1,27 @@
+Hershey Fonts Attribution
+=========================
+
+The single-stroke "Engraving" font bundled with GratisGraph is derived from
+the Hershey Fonts, originally created by Dr. A. V. Hershey while working at
+the U.S. National Bureau of Standards (now NIST).
+
+The Hershey Fonts are in the public domain as a work of the U.S. Government.
+The vector data is distributed under the following long-standing terms that
+accompany the USENET/usefor distribution of the Hershey data:
+
+  - This distribution of the Hershey Fonts may be used by anyone for any
+    purpose, commercial or otherwise, providing:
+      1. The following acknowledgements must be distributed with the font
+         data:
+           - The Hershey Fonts were originally created by Dr. A. V. Hershey
+             while working at the U.S. National Bureau of Standards.
+           - The format of the Font data in this distribution was originally
+             created by James Hurt (Cognition, Inc.).
+      2. The font data in this distribution may be converted into any other
+         format EXCEPT that the acknowledgements listed above must be
+         included in any product that uses or derives from the data.
+      3. This distribution may be compressed, archived, or otherwise altered
+         in form, provided the acknowledgements remain intact.
+
+The .jhf encoding used here is the conventional ASCII representation of the
+Hershey vector data.

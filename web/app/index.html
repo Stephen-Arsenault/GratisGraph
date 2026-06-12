@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GratisGraph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">Gratis<b>Graph</b></div>
+    <button class="theme-toggle" id="themeToggle" title="Toggle theme"><span id="themeIcon">◐</span> <span id="themeLabel">light</span></button>
+    <div class="status-pill" id="serverPill"><span class="dot" id="serverDot"></span><span id="serverText">connecting…</span></div>
+    <div class="status-pill" id="machinePill"><span class="dot" id="machineDot"></span><span id="machineText">no machine</span></div>
+  </header>
+
+  <aside class="rail">
+    <div>
+      <div class="section-label">Tools</div>
+      <div class="toolbar">
+        <button class="tool" id="toolImport" title="Import file — .gc · .gcode · .dxf · .ggs (or drop anywhere)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+        </button>
+        <button class="tool" id="toolCircle" title="Add circle (20mm)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="5.5"/></svg>
+        </button>
+        <button class="tool" id="toolSquare" title="Add square (20mm)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="10" height="10"/></svg>
+        </button>
+        <button class="tool" id="toolLine" title="Add line (20mm)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 13L13 3"/></svg>
+        </button>
+        <button class="tool" id="toolText" title="Add text">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4V3h10v1M8 3v10M6.5 13h3"/></svg>
+        </button>
+      </div>
+      <input type="file" id="file" accept=".gc,.gcode,.nc,.ggs,.dxf" hidden>
+      <input type="file" id="fontFile" accept=".ttf" hidden>
+    </div>
+
+    <div>
+      <div class="section-label-row">
+        <span class="section-label">Objects</span>
+        <button class="linklike" id="newSceneBtn" type="button">New scene</button>
+      </div>
+      <ul class="object-list" id="objectList"></ul>
+      <div class="muted" id="objectsEmpty" style="font-size:12px">Drop a file anywhere, or use the tools above.</div>
+    </div>
+
+    <div id="settingsCard">
+      <div id="textSettings" style="display:none">
+        <div class="section-label">Text</div>
+        <div class="field"><input id="textValue" type="text" placeholder="Your text" autocomplete="off"></div>
+        <div class="params" style="margin-top:8px">
+          <div class="field"><label>Font</label>
+            <select id="textFont">
+              <option value="serif">Serif (Tinos)</option>
+              <option value="sans">Sans (Arimo)</option>
+              <option value="script">Script (Great Vibes)</option>
+              <option value="gorton">Gorton (plate lettering)</option>
+              <option value="engrave" selected>Engraving (single-stroke)</option>
+              <option value="custom">Custom .ttf…</option>
+            </select>
+          </div>
+          <div class="field"><label>Size mm</label><input id="textSize" type="number" value="10" min="1" max="80" step="0.5"></div>
+        </div>
+        <button class="ghost" id="addTextBtn" style="margin-top:8px; width:100%">Add text</button>
+      </div>
+
+      <div id="objSettings" style="display:none">
+        <div class="section-label">Object</div>
+        <div class="params">
+          <div class="field"><label>Width mm</label><input id="objW" type="number" step="0.1" min="0.1"></div>
+          <div class="field"><label>Height mm</label><input id="objH" type="number" step="0.1" min="0.1"></div>
+          <div class="field"><label>Rotation °</label><input id="objRot" type="number" step="1" value="0"></div>
+          <div class="field"><label>Scale ×</label><input id="objScale" type="number" step="0.05" min="0.05" value="1"></div>
+        </div>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="objRef"> Reference only (don't engrave)</label>
+        <small class="muted" style="font-size:11px; display:block; margin-top:6px">Drag handle to rotate · corner to scale · Shift = free</small>
+        <button class="ghost" id="delObjBtn" style="margin-top:8px; width:100%" disabled>Delete object</button>
+      </div>
+
+      <div id="jobSettings">
+        <div class="section-label">Job settings</div>
+        <div class="params">
+          <div class="field"><label>Speed (VS)</label><input id="speed" type="number" value="25" min="1" max="100"></div>
+          <div class="field"><label>Depth (PZ)</label><input id="depth" type="number" value="30" min="0" max="100"></div>
+          <div class="field"><label>Origin X mm</label><input id="ox" type="number" value="0" step="0.1"></div>
+          <div class="field"><label>Origin Y mm</label><input id="oy" type="number" value="0" step="0.1"></div>
+        </div>
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="optimise" checked> Optimise toolpath</label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="flipy"> Flip Y (LightBurn)</label>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Pairing</div>
+      <div id="pairWrap" class="field"><label>Server pairing code</label><input id="token" type="text" placeholder="from the server terminal" autocomplete="off"></div>
+      <div id="pairDone" class="pair-done" style="display:none">
+        <span class="dot on"></span> Paired
+        <button class="linklike" id="unpairBtn" type="button">Re-pair</button>
+      </div>
+    </div>
+
+    <div style="margin-top:auto; display:flex; flex-direction:column; gap:8px">
+      <div class="btn-row">
+        <button class="ghost" id="saveBtn" disabled>Save scene</button>
+        <button class="ghost" id="reportBtn">Report machine</button>
+      </div>
+      <button class="ghost" id="prepareBtn" disabled>Prepare for engraving →</button>
+      <button class="primary" id="sendBtn" disabled>Send to machine</button>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="stage-head">
+      <span id="modeLabel" class="mode-label edit">Edit · arrange objects</span>
+      <span id="jobInfo" class="muted"></span>
+      <span class="spacer"></span>
+      <label class="check" style="font-size:12px"><input type="checkbox" id="trueScale"> True scale (1:1)</label>
+      <span id="bounds" class="muted"></span>
+    </div>
+    <div class="bed-wrap">
+      <svg id="bed" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="telemetry">
+      <div><span class="t">HEAD</span> <span class="axis">X</span> <span class="v" id="tx">—</span></div>
+      <div><span class="axis">Y</span> <span class="v" id="ty">—</span></div>
+      <div><span class="axis">Z</span> <span class="v" id="tz">—</span></div>
+      <div class="spacer" style="margin-left:auto"><span class="t" id="jobState">idle</span></div>
+      <button class="legal-link" id="legalBtn" type="button">Legal &amp; attribution</button>
+    </div>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="legalModal" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="legalTitle">
+    <div class="modal-head">
+      <h2 id="legalTitle">Legal &amp; attribution</h2>
+      <button class="modal-close" id="legalClose" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body selectable">
+      <h3>Trademarks</h3>
+      <p>Gravograph, Gravotech, Gravostyle, and GT Smartstream are trademarks of
+      Gravotech Group. GratisGraph is an independent open-source project and is
+      <strong>not affiliated with, authorised by, or endorsed by Gravotech</strong>.
+      These names are used only to describe hardware compatibility.</p>
+
+      <h3>Interoperability research</h3>
+      <p>GratisGraph is the result of independent interoperability research conducted
+      on hardware owned by its authors, for the purpose of building an open-source
+      driver. No proprietary source code was used or reproduced, and no proprietary
+      binaries are distributed.</p>
+
+      <h3>Licence</h3>
+      <p>GratisGraph is free software under the <strong>GNU GPL v3</strong>.
+      It comes with no warranty: this software moves real motors with real cutters —
+      keep your hands clear and test with a pen first.</p>
+
+      <h3>Bundled fonts</h3>
+      <ul class="legal-fonts">
+        <li><strong>Tinos</strong> (Serif) — © The Tinos Project Authors. SIL Open Font License 1.1.</li>
+        <li><strong>Arimo</strong> (Sans) — © The Arimo Project Authors. SIL Open Font License 1.1.</li>
+        <li><strong>Great Vibes</strong> (Script) — © The Great Vibes Project Authors. SIL Open Font License 1.1.</li>
+        <li><strong>Open Gorton</strong> (Plate lettering) — © 2020 dakotafelder. MIT License.</li>
+        <li><strong>Hershey</strong> (Engraving, single-stroke) — originally created by
+        Dr.&nbsp;A.&nbsp;V.&nbsp;Hershey at the U.S. National Bureau of Standards; data format by
+        James Hurt (Cognition, Inc.). Public domain, distributed with attribution.</li>
+      </ul>
+      <p class="muted">Full licence texts are included with the software in
+      <code>fonts/</code>. Fonts you load yourself via “Custom .ttf” are processed
+      entirely in your browser and are never uploaded.</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

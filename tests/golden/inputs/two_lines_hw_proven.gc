@@ -1,0 +1,7 @@
+; The geometry hardware-verified 2026-06-09 (telemetry: MX/MY peak 3999)
+G21
+G90
+G0 X10 Y20
+G1 X20 Y20
+G0 X30 Y40
+G1 X40 Y40

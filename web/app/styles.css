@@ -1,0 +1,300 @@
+/* GratisGraph — control surface for a contact engraver.
+   Design: the machine bed IS the interface. Brushed-metal neutrals, a
+   machinist's surface-plate grid, one accent for the engraved line.
+   Type: Space Grotesk (UI) + a true monospace for coordinates (instrument data). */
+
+:root {
+  --bed:        #15171a;   /* deep graphite — the work surface */
+  --panel:      #1d2024;   /* raised panel */
+  --panel-2:    #25282d;
+  --line:       #34383f;   /* hairline rules / grid */
+  --ink:        #e7e9ec;   /* primary text */
+  --ink-dim:    #9aa0a8;   /* secondary */
+  --ink-faint:  #5c626b;
+  --cut:        #ff6a3d;   /* THE accent: the engraved line / active toolpath */
+  --cut-dim:    #b34624;
+  --rapid:      #3a6ea5;   /* pen-up rapid moves (cool, recedes) */
+  --ok:         #4a9e6f;
+  --warn:       #d9a441;
+  --r: 7px;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ui: "Space Grotesk", system-ui, -apple-system, sans-serif;
+}
+
+/* ── light theme (user-selectable) ── */
+:root[data-theme="light"] {
+  --bed:        #f4f5f7;   /* paper-white work surface */
+  --panel:      #ffffff;
+  --panel-2:    #eef0f3;
+  --line:       #d4d8de;   /* hairline rules / grid */
+  --ink:        #1a1d21;
+  --ink-dim:    #5c626b;
+  --ink-faint:  #9aa0a8;
+  --cut:        #e8551f;   /* slightly deeper so it reads on white */
+  --cut-dim:    #b34624;
+  --rapid:      #3a6ea5;
+  --ok:         #2f8f5b;
+  --warn:       #b8860b;
+}
+:root[data-theme="light"] #bed { background: #fbfbfc; }
+
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bed);
+  color: var(--ink);
+  font-family: var(--ui);
+  font-size: 14px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  grid-template-rows: 52px 1fr;
+  height: 100vh;
+}
+
+/* ── header ── */
+header {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 600; letter-spacing: -0.02em; font-size: 15px; }
+.brand b { color: var(--cut); }
+.status-pill {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  padding: 5px 11px; border: 1px solid var(--line); border-radius: 100px;
+  user-select: none; -webkit-user-select: none;
+}
+.status-pill.cta { cursor: pointer; }   /* keep the clickable CTA feeling actionable */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); }
+.dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot.busy { background: var(--warn); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+/* ── left rail ── */
+.rail {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 18px;
+  display: flex; flex-direction: column; gap: 18px;
+  overflow-y: auto;
+}
+.section-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ink-faint); margin-bottom: 9px;
+}
+
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--r);
+  padding: 26px 16px; text-align: center; cursor: pointer;
+  transition: border-color .15s, background .15s;
+  color: var(--ink-dim);
+}
+.drop:hover, .drop.over { border-color: var(--cut); background: rgba(255,106,61,.05); color: var(--ink); }
+.drop b { display: block; color: var(--ink); margin-bottom: 3px; }
+.drop small { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+
+.params { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field label { display: block; font-size: 11px; color: var(--ink-dim); margin-bottom: 4px; }
+.field input, .field select {
+  width: 100%; background: var(--bed); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 7px 9px; font-family: var(--mono); font-size: 13px;
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--cut); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-dim); cursor: pointer; }
+
+button {
+  font-family: var(--ui); font-size: 13px; font-weight: 500;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel-2); color: var(--ink);
+  padding: 9px 13px; cursor: pointer; transition: all .12s;
+}
+button:hover:not(:disabled) { border-color: var(--ink-faint); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.primary { background: var(--cut); border-color: var(--cut); color: #1a0d07; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #ff7d55; }
+button.ghost { background: transparent; }
+.btn-row { display: flex; gap: 8px; }
+.btn-row button { flex: 1; }
+
+/* ── stage (the bed) ── */
+.stage {
+  position: relative;
+  display: flex; flex-direction: column;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,255,255,.015), transparent 60%),
+    var(--bed);
+}
+.stage-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+}
+.stage-head .spacer { margin-left: auto; }
+.bed-wrap { flex: 1; position: relative; display: grid; place-items: center; padding: 24px; min-height: 0; overflow: hidden; }
+#bed {
+  /* square canvas at ~75% of the smaller stage dimension, aspect-locked so the
+     full bed + margin is always visible (no overflow). */
+  width: min(75vh, 75%);
+  aspect-ratio: 1 / 1;
+  height: auto;
+  background: #0e1013; border: 1px solid var(--line); border-radius: 14px;
+}
+
+.telemetry {
+  display: flex; gap: 22px; padding: 11px 18px;
+  border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px;
+}
+.telemetry .t { color: var(--ink-faint); }
+.telemetry .v { color: var(--ink); }
+.telemetry .axis { color: var(--cut); }
+
+/* toast */
+.toast-wrap { position: fixed; top: 68px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 50; align-items: center; }
+.toast {
+  background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--cut);
+  border-radius: 8px; padding: 14px 20px; font-size: 14px; line-height: 1.45;
+  min-width: 340px; max-width: 520px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.28);
+  animation: drop .2s ease;
+}
+.toast.ok { border-left-color: var(--ok); }
+.toast.warn { border-left-color: var(--warn); }
+@keyframes drop { from { opacity: 0; transform: translateY(-8px); } }
+
+.muted { color: var(--ink-faint); }
+.kv { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 12px; padding: 3px 0; }
+.kv span:last-child { color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+/* theme toggle */
+.theme-toggle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; font-size: 12px; font-family: var(--mono);
+  border: 1px solid var(--line); border-radius: 100px; background: transparent;
+  color: var(--ink-dim); cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--ink-faint); color: var(--ink); }
+
+/* unpaired machine pill: a pulsing call-to-action */
+.status-pill.cta {
+  cursor: pointer;
+  border-color: var(--warn);
+  color: var(--warn);
+  animation: cta-pulse 1.6s ease-in-out infinite;
+}
+.status-pill.cta:hover { background: rgba(217,164,65,.08); }
+@keyframes cta-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217,164,65,.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(217,164,65,.12); }
+}
+
+/* paired confirmation row + rejected pill */
+.pair-done { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-dim); }
+.linklike { background: none; border: none; padding: 0; margin-left: auto; color: var(--cut); cursor: pointer; font-size: 12px; }
+.linklike:hover { text-decoration: underline; }
+.status-pill.cta.bad { border-color: #d9534f; color: #e0716d; }
+.status-pill.cta.bad:hover { background: rgba(217,83,79,.08); }
+
+/* true-scale (1:1) mode — bed sized in real mm; wrapper scrolls if larger than view.
+   ~3.78px per mm is the CSS reference (96dpi); the bed is 114mm incl. margins. */
+.bed-wrap.true-scale { place-items: start; overflow: auto; }
+#bed.true-scale { width: 431px; height: 431px; }   /* 114mm * 3.78px/mm */
+
+/* ── scene editor UI ── */
+.object-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.obj-item {
+  font-size: 13px; padding: 6px 9px; border-radius: 5px; cursor: pointer;
+  color: var(--ink-dim); border: 1px solid transparent;
+}
+.obj-item:hover { background: var(--panel-2); }
+.obj-item.sel { color: var(--ink); border-color: var(--cut); background: rgba(255,106,61,.06); }
+
+.mode-label {
+  font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 100px;
+  border: 1px solid var(--line);
+}
+.mode-label.edit { color: var(--ink-dim); }
+.mode-label.prepare { color: var(--cut); border-color: var(--cut); }
+
+#bed .bbox { transition: opacity .1s; }
+#bed .obj { cursor: move; }
+
+/* ── selection discipline ──
+   The UI is chrome, not content: labels, grid graduations, status text and
+   button text shouldn't be selectable. Inputs (and anything marked
+   .selectable) opt back in. */
+body, .status-pill, .section-label, .mode-label, .obj-item, .check,
+.field label, .telemetry, .stage-head, #bed, #bed text, button, .pair-done {
+  user-select: none; -webkit-user-select: none;
+}
+input, textarea, .selectable {
+  user-select: text; -webkit-user-select: text;
+}
+
+/* ── tool strip + contextual settings ── */
+.toolbar { display: flex; gap: 6px; }
+.tool {
+  width: 40px; height: 34px; padding: 0;
+  display: grid; place-items: center;
+}
+.tool svg { width: 16px; height: 16px; display: block; }
+.tool.active { border-color: var(--cut); color: var(--cut); }
+.section-label-row { display: flex; justify-content: space-between; align-items: baseline; }
+.section-label-row .section-label { margin-bottom: 0; }
+.section-label-row + .object-list { margin-top: 9px; }
+#settingsCard { border-top: 1px solid var(--line); padding-top: 14px; }
+
+.obj-item.ref { opacity: .55; font-style: italic; }
+
+/* ── legal & attribution ── */
+.legal-link {
+  margin-left: 16px; background: none; border: none; padding: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.legal-link:hover { color: var(--ink-dim); }
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: grid; place-items: center; z-index: 100; padding: 24px;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  max-width: 560px; width: 100%; max-height: 80vh; display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--line);
+}
+.modal-head h2 { font-size: 16px; font-weight: 600; }
+.modal-close {
+  background: none; border: none; color: var(--ink-dim); font-size: 22px;
+  line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.modal-close:hover { color: var(--ink); }
+.modal-body { padding: 18px 20px; overflow-y: auto; font-size: 13px; line-height: 1.55; }
+.modal-body h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--cut); margin: 16px 0 6px;
+}
+.modal-body h3:first-child { margin-top: 0; }
+.modal-body p { color: var(--ink-dim); margin-bottom: 4px; }
+.modal-body strong { color: var(--ink); font-weight: 500; }
+.legal-fonts { list-style: none; padding: 0; margin: 6px 0; }
+.legal-fonts li { color: var(--ink-dim); padding: 3px 0; border-bottom: 1px solid var(--line); }
+.legal-fonts li:last-child { border-bottom: none; }
+.modal-body code { font-family: var(--mono); font-size: 12px; color: var(--ink); }

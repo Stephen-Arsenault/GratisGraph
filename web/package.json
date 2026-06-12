@@ -1,0 +1,19 @@
+{
+  "name": "gratisgraph-web",
+  "version": "0.1.0",
+  "description": "Browser-side GTS engine for GratisGraph: strokes -> optimise -> .m20 binary. Hot-updatable; the installed server stays a dumb byte-pipe.",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && tsx --test test/round.test.ts test/corpus.test.ts test/translator.test.ts test/optimise.test.ts test/preview.test.ts test/pipeline.test.ts test/scene.test.ts test/dxf.test.ts test/shapes.test.ts test/ttf.test.ts",
+    "build:engine": "tsc -p tsconfig.build.json",
+    "serve": "python3 -m http.server 5173 --directory app"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
