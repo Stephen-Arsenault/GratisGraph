@@ -13,9 +13,9 @@ applies the correct transforms for the target machine and validates the
 result against the work envelope before returning a GTS binary.
 
 Coordinate system (M20, confirmed from hardware):
-    Home (0,0) = front-left corner of work area
+    Home (0,0) = back-left corner of work area (nearest the gantry)
     +X         = tool moves right
-    +Y         = table moves backward (away from operator)
+    +Y         = mark moves toward the operator (table translates away)
     Units      = 0.01mm (100 units per mm)
 
     LightBurn files use Y-up convention — pass flip_y=True.

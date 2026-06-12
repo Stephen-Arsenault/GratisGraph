@@ -227,7 +227,7 @@ def gcode_to_strokes(moves: List[GMove],
                 f'(envelope: 0.0 to {env_x_mm:.1f}mm)\n'
                 f'  Y range: {min_y:.2f} to {max_y:.2f}mm '
                 f'(envelope: 0.0 to {env_y_mm:.1f}mm)\n'
-                f'  Adjust your job origin. Home (0,0) is the front-left corner.'
+                f'  Adjust your job origin. Home (0,0) is the back-left corner (nearest the gantry).'
             )
 
     strokes   = []

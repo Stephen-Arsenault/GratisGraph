@@ -31,7 +31,7 @@ Extension `.ggs` (GratisGraph strokes). UTF-8 JSON:
 }
 ```
 
-- `frame: "machine"` — home (0,0) front-left, +X right, +Y toward the back.
+- `frame: "machine"` — home (0,0) back-left (nearest the gantry), +X right, +Y toward the operator.
   Coordinate transforms (Y-flip, origin shift, scale) happen in the parser
   layer; a stroke file is ALWAYS already in machine frame.
 - `start` is absolute (mm, floats); `deltas` are pen-down segment deltas in

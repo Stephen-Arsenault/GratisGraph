@@ -19,8 +19,10 @@ If code and this document disagree, this document wins — fix the code.
 
 - All multi-byte integers are **big-endian**.
 - Coordinate unit: **0.01 mm** (100 units/mm). Confirmed by physical measurement.
-- Coordinate system: home (0,0) = front-left of work area; +X = tool right;
-  +Y = table moves backward (away from operator).
+- Coordinate system: home (0,0) = back-left of work area (nearest the gantry,
+  farthest from the operator); +X = tool right; +Y toward the operator (front).
+  The table translates away from the operator to advance +Y, so home sits at
+  the back. Confirmed with a felt-tip marker fiducial.
 - Work envelope: 100×100 mm software, ~120×120 mm physical (M20).
 - "GTS" is this project's name for the format; the vendor does not document one.
   File extension: `.m20` (per-machine extensions for future variants).

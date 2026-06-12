@@ -22,7 +22,141 @@ let activeTool = 'select';       // 'select' | 'text' — drives the settings ca
 let selectedId = null;           // selected object id (edit mode)
 let mode = 'edit';               // 'edit' | 'prepare'
 let m20 = null;                  // built binary (prepare mode)
+let jobDurationSec = 0;          // estimated runtime of the built job
 const SHARED_GRID = { W: 100, H: 100, M: 10 };
+
+// inline icons for the object-list row actions
+const ICON = {
+  eye:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.6-4.5 7-4.5 7 4.5 7 4.5-2.6 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="1.9"/></svg>',
+  eyeOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.7A6.7 6.7 0 0 1 8 3.5c4.4 0 7 4.5 7 4.5a12.4 12.4 0 0 1-2.1 2.6M4.1 4.8A12.2 12.2 0 0 0 1 8s2.6 4.5 7 4.5a6.5 6.5 0 0 0 2.7-.6"/><path d="M2 2l12 12"/></svg>',
+  trash:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.2h10.4M6.3 4.2V3c0-.4.3-.7.7-.7h2c.4 0 .7.3.7.7v1.2M4.3 4.2l.6 8.2c0 .4.4.8.8.8h4.6c.4 0 .8-.4.8-.8l.6-8.2"/></svg>',
+};
+
+// ── motion model: job-duration estimate (ported from gts_optimise.estimate_duration) ──
+const _VS_TO_MM_PER_SEC = 0.995, _RAPID_MULTIPLIER = 1.0, _Z_DWELL_SEC = 0.5;
+function estimateDurationSec(strokes, speed, unitsPerMm = 100) {
+  if (!strokes.length) return 0;
+  const v = speed * _VS_TO_MM_PER_SEC, rapid = v * _RAPID_MULTIPLIER;
+  const moveT = (mm, vel) => (mm > 0 && vel > 0) ? mm / vel : 0;
+  let total = 0, cx = 0, cy = 0;
+  for (const s of strokes) {
+    const sx = s.start[0], sy = s.start[1];
+    total += moveT(Math.hypot(sx - cx, sy - cy) / unitsPerMm, rapid);   // rapid to start
+    total += _Z_DWELL_SEC;                                              // Z dip
+    let len = 0, ex = sx, ey = sy;
+    for (const [dx, dy] of s.deltas) { len += Math.hypot(dx, dy); ex += dx; ey += dy; }
+    total += moveT(len / unitsPerMm, v);                               // engrave travel
+    cx = ex; cy = ey;
+  }
+  total += moveT(Math.hypot(cx, cy) / unitsPerMm, rapid);              // return home
+  return total;
+}
+function formatDuration(sec) {
+  sec = Math.round(sec);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m >= 60) { const h = Math.floor(m / 60); return `${h}h\u202f${m % 60}m`; }
+  return m ? `${m}m\u202f${s}s` : `${s}s`;
+}
+
+// ── orientation / centering / mirroring (strokes are {start,deltas} in device units) ──
+// Source content authored Y-up (fonts, DXF/CAD) must be flipped into the Y-down
+// machine frame (home top-left, +Y toward the operator) so it engraves upright.
+function flipStrokesY(strokes) {
+  return strokes.map((s) => ({ start: [s.start[0], -s.start[1]], deltas: s.deltas.map(([dx, dy]) => [dx, -dy]) }));
+}
+// Transform that lands the strokes' bbox centre on the bed centre (50,50 mm).
+// fit=true also scales the longest side to ~90mm so big imports land on-bed.
+function centerTransform(strokes, fit = false) {
+  const [x0, y0, x1, y1] = strokesBounds(strokes);
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  let scale = 1;
+  if (fit) { const maxDim = Math.max(x1 - x0, y1 - y0); scale = maxDim > 0 ? 9000 / maxDim : 1; }
+  return { tx: 5000 - cx, ty: 5000 - cy, rotation: 0, scale };
+}
+function mirrorObject(obj, axis) {
+  const [minX, minY, maxX, maxY] = strokesBounds(obj.baseStrokes);
+  if (axis === 'x') {
+    const c2 = minX + maxX;   // mirror X about local centre — world placement unchanged
+    obj.baseStrokes = obj.baseStrokes.map((s) => ({ start: [c2 - s.start[0], s.start[1]], deltas: s.deltas.map(([dx, dy]) => [-dx, dy]) }));
+  } else {
+    const c2 = minY + maxY;
+    obj.baseStrokes = obj.baseStrokes.map((s) => ({ start: [s.start[0], c2 - s.start[1]], deltas: s.deltas.map(([dx, dy]) => [dx, -dy]) }));
+  }
+}
+function mirrorSelected(axis) {
+  const obj = scene.objects.find((o) => o.id === selectedId);
+  if (!obj) { toast('Select an object to mirror.', 'warn'); return; }
+  mirrorObject(obj, axis);
+  renderEdit(); renderObjectList(); autosave();
+}
+
+// ── SVG import — flatten via the browser's own SVG engine (handles every path
+// command + nested transforms). SVG is natively Y-down, i.e. already the machine
+// frame, so no Y-flip. Multi-subpath <path>s are split at pen-up jumps. ──
+function svgUnitMm(svg) {
+  const vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number).filter((n) => !Number.isNaN(n));
+  const wAttr = (svg.getAttribute('width') || '').trim();
+  if (vb.length === 4 && vb[2] > 0 && wAttr) {
+    const m = /^([\d.]+)\s*(mm|cm|in|px|pt)?$/i.exec(wAttr);
+    if (m) {
+      const val = parseFloat(m[1]), unit = (m[2] || 'px').toLowerCase();
+      const wMm = unit === 'mm' ? val : unit === 'cm' ? val * 10 : unit === 'in' ? val * 25.4 : unit === 'pt' ? val * 25.4 / 72 : val * 25.4 / 96;
+      return wMm / vb[2];
+    }
+  }
+  return 25.4 / 96;   // assume px → mm at 96dpi
+}
+function applyMatrix(m, x, y) { return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]; }
+function pointsToStroke(pts, ctm, mmPerUnit) {
+  const u = (x, y) => { const [mx, my] = applyMatrix(ctm, x, y); return [Math.round(mx * mmPerUnit * 100), Math.round(my * mmPerUnit * 100)]; };
+  let [sx, sy] = u(pts[0][0], pts[0][1]);
+  const deltas = []; let px = sx, py = sy;
+  for (let i = 1; i < pts.length; i++) {
+    const [qx, qy] = u(pts[i][0], pts[i][1]);
+    if (qx !== px || qy !== py) deltas.push([qx - px, qy - py]);
+    px = qx; py = qy;
+  }
+  return deltas.length ? { start: [sx, sy], deltas } : null;
+}
+function parseSvgToStrokes(text) {
+  const warnings = [];
+  const parsed = new DOMParser().parseFromString(text, 'image/svg+xml');
+  if (parsed.querySelector('parsererror')) throw new Error('Invalid SVG.');
+  const srcSvg = parsed.querySelector('svg');
+  if (!srcSvg) throw new Error('No <svg> element.');
+  const mmPerUnit = svgUnitMm(srcSvg);
+  const holder = document.createElement('div');
+  holder.setAttribute('style', 'position:absolute;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden;opacity:0');
+  const svg = document.importNode(srcSvg, true);
+  holder.appendChild(svg);
+  document.body.appendChild(holder);
+  const strokes = [];
+  try {
+    for (const el of svg.querySelectorAll('path,line,polyline,polygon,rect,circle,ellipse')) {
+      if (el.closest('defs,marker,pattern,clipPath,mask,symbol')) continue;   // skip non-drawn defs
+      let total = 0;
+      try { total = el.getTotalLength(); } catch { continue; }
+      if (!(total > 0)) continue;
+      const ctm = el.getCTM();
+      if (!ctm) continue;
+      const step = Math.max(0.25, total / 3000);
+      const jump = step * 4;   // a pen-up move (zero-length) shows as a sample jump
+      let cur = [], prev = null;
+      const flush = () => { if (cur.length >= 2) { const st = pointsToStroke(cur, ctm, mmPerUnit); if (st) strokes.push(st); } cur = []; };
+      for (let L = 0; L <= total + 1e-6; L += step) {
+        const pt = el.getPointAtLength(Math.min(L, total));
+        const p = [pt.x, pt.y];
+        if (prev && Math.hypot(p[0] - prev[0], p[1] - prev[1]) > jump) flush();
+        cur.push(p); prev = p;
+      }
+      flush();
+    }
+  } finally {
+    document.body.removeChild(holder);
+  }
+  if (!strokes.length) warnings.push('No usable path geometry found in the SVG.');
+  return { strokes, warnings };
+}
 
 // ── toasts ──
 function toast(msg, kind = '') {
@@ -59,20 +193,14 @@ async function pollMachine() {
     setMachine(m);
   } catch { setMachine(null); }
 }
+let paired = false;
 function setMachine(m) {
-  const pill = $('machinePill'), dot = $('machineDot'), txt = $('machineText');
-  const cta = (m === 'unpaired' || m === 'rejected');
-  pill.classList.toggle('cta', cta);
-  pill.classList.toggle('bad', m === 'rejected');
-  if (m === 'unpaired') { dot.className = 'dot busy'; txt.textContent = 'get your pairing code'; showPairingField(true); }
-  else if (m === 'rejected') { dot.className = 'dot busy'; txt.textContent = 'pairing code rejected'; showPairingField(true); }
-  else if (m && m.model) { dot.className = 'dot on'; txt.textContent = m.model; showPairingField(false); }
-  else { dot.className = 'dot'; txt.textContent = 'no machine'; }
+  const dot = $('machineDot'), txt = $('machineText');
+  if (m === 'unpaired') { dot.className = 'dot'; txt.textContent = 'not paired'; paired = false; showPairingField(true); }
+  else if (m === 'rejected') { dot.className = 'dot busy'; txt.textContent = 'code rejected'; paired = false; showPairingField(true); }
+  else if (m && m.model) { dot.className = 'dot on'; txt.textContent = m.model; paired = true; showPairingField(false); }
+  else { dot.className = 'dot'; txt.textContent = 'no machine'; if (!paired) showPairingField(true); }
   refreshSendButton();
-}
-function showPairingHelp() {
-  toast('Start the server (or open the GratisGraph tray). It prints a pairing code in the terminal — paste it into the field on the left.', '');
-  $('token').focus();
 }
 
 
@@ -84,10 +212,11 @@ function sceneToDoc() {
     format: 'gratisgraph-scene', version: 1, units: 'mm', frame: 'machine',
     settings: {
       speed: +$('speed').value, depth: +$('depth').value,
-      optimise: $('optimise').checked, flipy: $('flipy').checked,
+      optimise: $('optimise').checked,
     },
     objects: scene.objects.map((o) => ({
       name: o.name, transform: o.transform, reference: o.reference || false,
+      source: o.source || null,
       baseStrokes: o.baseStrokes.map((s) => ({ start: s.start, deltas: s.deltas })),
     })),
   };
@@ -112,7 +241,6 @@ function restoreAutosave() {
     $('speed').value = doc.settings.speed ?? 25;
     $('depth').value = doc.settings.depth ?? 30;
     $('optimise').checked = doc.settings.optimise !== false;
-    $('flipy').checked = !!doc.settings.flipy;
   }
   scene = newScene();
   for (const o of doc.objects) {
@@ -120,6 +248,7 @@ function restoreAutosave() {
       o.baseStrokes.map((s) => ({ start: s.start, deltas: s.deltas })),
       o.transform || identityTransform());
     no.reference = !!o.reference;
+    if (o.source) no.source = o.source;
     scene.objects.push(no);
   }
   selectedId = scene.objects.length ? scene.objects[scene.objects.length - 1].id : null;
@@ -129,10 +258,6 @@ function clearAutosave() { try { localStorage.removeItem(AUTOSAVE_KEY); } catch 
 
 // ── building objects from files ──
 function strokesFromFile(text, kind) {
-  const opts = {
-    speed: +$('speed').value, pz: +$('depth').value,
-    flipY: $('flipy').checked, optimise: false,   // edit mode keeps raw geometry; optimise at Prepare
-  };
   if (kind === 'ggs') {
     const doc = JSON.parse(text);
     if (doc.format === 'gratisgraph-scene') return null; // handled by loadScene
@@ -141,14 +266,20 @@ function strokesFromFile(text, kind) {
   if (kind === 'dxf') {
     const r = parseDxf(text);
     for (const w of r.warnings) toast(w, 'warn');
+    return flipStrokesY(r.strokes);            // DXF is Y-up → flip into the Y-down machine frame
+  }
+  if (kind === 'svg') {
+    const r = parseSvgToStrokes(text);          // SVG is already Y-down — no flip
+    for (const w of r.warnings) toast(w, 'warn');
     return r.strokes;
   }
-  return gcodeToOptimisedStrokes(text, opts);
+  // G-code: orientation left as authored (its Y convention is ambiguous)
+  return gcodeToOptimisedStrokes(text, { speed: +$('speed').value, pz: +$('depth').value, flipY: false, optimise: false });
 }
 
 function addFile(file) {
   const lower = file.name.toLowerCase();
-  const kind = lower.endsWith('.ggs') ? 'ggs' : lower.endsWith('.dxf') ? 'dxf' : 'gcode';
+  const kind = lower.endsWith('.ggs') ? 'ggs' : lower.endsWith('.dxf') ? 'dxf' : lower.endsWith('.svg') ? 'svg' : 'gcode';
   const name = file.name.replace(/\.[^.]+$/, '');
   const reader = new FileReader();
   reader.onload = () => {
@@ -159,7 +290,8 @@ function addFile(file) {
       } else {
         const baseStrokes = strokesFromFile(text, kind);
         if (!baseStrokes || !baseStrokes.length) { toast(`${file.name} has no strokes.`, 'warn'); return; }
-        const obj = makeObject(name, baseStrokes);
+        const obj = makeObject(name, baseStrokes, centerTransform(baseStrokes, true));   // scale-to-fit + centre
+        obj.source = { kind: 'import', format: kind };
         scene.objects.push(obj);
         selectedId = obj.id;
         toMode('edit');
@@ -179,6 +311,7 @@ function loadScene(doc) {
       o.baseStrokes.map((s) => ({ start: s.start, deltas: s.deltas })),
       o.transform || identityTransform());
     no.reference = !!o.reference;
+    if (o.source) no.source = o.source;
     scene.objects.push(no);
   }
   selectedId = scene.objects.length ? scene.objects[scene.objects.length - 1].id : null;
@@ -223,10 +356,10 @@ async function addText() {
       : ttfTextToStrokes(data, text, size, 0, 0);
     for (const w of r.warnings) toast(w, 'warn');
     if (!r.strokes.length) { toast('No engraveable strokes in that text.', 'warn'); return; }
-    // generate at origin, then translate to bed centre via the transform
-    const txUnits = Math.round((50 - r.widthMm / 2) * 100);
-    const obj = makeObject(text.length > 18 ? text.slice(0, 18) + '…' : text, r.strokes,
-                           { tx: txUnits, ty: 5000 - Math.round(size * 35), rotation: 0, scale: 1 });
+    // fonts are authored Y-up; flip into the Y-down machine frame, then centre on the bed
+    const strokes = flipStrokesY(r.strokes);
+    const obj = makeObject(text.length > 18 ? text.slice(0, 18) + '…' : text, strokes, centerTransform(strokes));
+    obj.source = { kind: 'text', text, font: key, size };
     scene.objects.push(obj);
     selectedId = obj.id;
     activeTool = 'select';
@@ -242,6 +375,7 @@ function addShape(kind) {
   else if (kind === 'square') { strokes = [rectStroke(20, 20, 50, 50)]; name = `square ${++shapeCounts.square}`; }
   else { strokes = [lineStroke(20, 50, 50)]; name = `line ${++shapeCounts.line}`; }
   const obj = makeObject(name, strokes);
+  obj.source = { kind: 'shape', shape: kind };
   scene.objects.push(obj);
   selectedId = obj.id;
   toMode('edit');
@@ -288,6 +422,7 @@ function prepareForEngraving() {
   const opts = { speed: +$('speed').value, pz: +$('depth').value, optimise: $('optimise').checked };
   let strokes = flat;
   if ($('optimise').checked) strokes = optimiseStrokes(flat, {});
+  jobDurationSec = estimateDurationSec(strokes, +$('speed').value);
   m20 = buildGts(strokes, opts);
   toMode('prepare');
 }
@@ -305,8 +440,8 @@ function bedChrome() {
   for (let j = 1; j < H; j++) { if (j % 10 === 0) major += `<line x1="0" y1="${j}" x2="${W}" y2="${j}"/>`; else minor += `<line x1="0" y1="${j}" x2="${W}" y2="${j}"/>`; }
   svg += minor + `</g>` + major + `</g>`;
   let labels = `<g fill="${cFaint}" font-family="var(--mono)" font-size="2.6">`;
-  for (let i = 0; i <= W; i += 10) labels += `<text x="${i}" y="${H + 4.6}" text-anchor="middle">${i}</text>`;
-  for (let j = 0; j <= H; j += 10) labels += `<text x="${-2}" y="${H - j + 0.9}" text-anchor="end">${j}</text>`;
+  for (let i = 0; i <= W; i += 10) labels += `<text x="${i}" y="${-2.4}" text-anchor="middle">${i}</text>`;
+  for (let j = 0; j <= H; j += 10) labels += `<text x="${-2}" y="${j + 0.9}" text-anchor="end">${j}</text>`;
   svg += labels + `</g>`;
   return svg;
 }
@@ -317,17 +452,18 @@ function bedPointMm(ev) {
   const { W, H, M } = SHARED_GRID;
   const x = -M + (ev.clientX - rect.left) * ((W + 2 * M) / rect.width);
   const ySvg = -M + (ev.clientY - rect.top) * ((H + 2 * M) / rect.height);
-  return [x, H - ySvg];
+  return [x, ySvg];
 }
 
-// machine(mm) -> svg point string, applying the Y-flip (origin front-left)
-function pp(x, y) { return `${x / 100},${SHARED_GRID.H - y / 100}`; }
-function mmflip(yUnits) { return SHARED_GRID.H - yUnits / 100; }
+// machine(units) -> svg point string. Origin (0,0) = top-left (home / back-left
+// of the bed), +X right, +Y down (toward the operator) — matches the operator's view.
+function pp(x, y) { return `${x / 100},${y / 100}`; }
+function mmflip(yUnits) { return yUnits / 100; }
 
 // ── EDIT render: objects as strokes + draggable bounding boxes ──
 function renderEdit() {
   const bed = $('bed');
-  const cCut = cssVar('--cut'), cInk = cssVar('--ink'), cBox = cssVar('--ink-faint'), cRef = cssVar('--rapid');
+  const cCut = cssVar('--cut'), cInk = cssVar('--ink'), cBox = cssVar('--ink-faint'), cRef = cssVar('--rapid'), cCtrl = cssVar('--ctrl');
   let svg = bedChrome();
   for (const obj of scene.objects) {
     const ws = worldStrokes(obj);
@@ -343,13 +479,13 @@ function renderEdit() {
     // bounding box (draggable handle)
     const [bx0, by0, bx1, by1] = strokesBounds(ws);
     const pad = 100; // 1mm pad in units
-    const X = (bx0 - pad) / 100, Y0 = mmflip(by1 + pad), Wd = (bx1 - bx0 + 2 * pad) / 100, Hd = (by1 - by0 + 2 * pad) / 100;
+    const X = (bx0 - pad) / 100, Y0 = mmflip(by0 - pad), Wd = (bx1 - bx0 + 2 * pad) / 100, Hd = (by1 - by0 + 2 * pad) / 100;
     svg += `<rect class="bbox" data-id="${obj.id}" x="${X}" y="${Y0}" width="${Wd}" height="${Hd}" fill="transparent" stroke="${cBox}" stroke-width="${selected ? 0.25 : 0.15}" stroke-dasharray="1 1" opacity="${selected ? 0.85 : 0.4}" style="cursor:move"/>`;
     if (selected) {
       const midX = X + Wd / 2;
-      svg += `<line x1="${midX}" y1="${Y0}" x2="${midX}" y2="${Y0 - 3.2}" stroke="${cBox}" stroke-width="0.12"/>`;
-      svg += `<circle class="rot-handle" data-id="${obj.id}" cx="${midX}" cy="${Y0 - 4.4}" r="1.5" fill="${cssVar('--panel')}" stroke="${cCut}" stroke-width="0.25" style="cursor:grab"/>`;
-      svg += `<rect class="scale-handle" data-id="${obj.id}" x="${X + Wd - 1.2}" y="${Y0 + Hd - 1.2}" width="2.4" height="2.4" fill="${cssVar('--panel')}" stroke="${cCut}" stroke-width="0.25" style="cursor:nwse-resize"/>`;
+      svg += `<line x1="${midX}" y1="${Y0}" x2="${midX}" y2="${Y0 - 3.2}" stroke="${cCtrl}" stroke-width="0.18"/>`;
+      svg += `<circle class="rot-handle" data-id="${obj.id}" cx="${midX}" cy="${Y0 - 4.4}" r="1.5" fill="${cssVar('--panel')}" stroke="${cCtrl}" stroke-width="0.35" style="cursor:grab"/>`;
+      svg += `<rect class="scale-handle" data-id="${obj.id}" x="${X + Wd - 1.2}" y="${Y0 + Hd - 1.2}" width="2.4" height="2.4" fill="${cssVar('--panel')}" stroke="${cCtrl}" stroke-width="0.35" style="cursor:nwse-resize"/>`;
     }
   }
   bed.innerHTML = svg + headLayer();
@@ -366,7 +502,7 @@ function renderPrepare() {
   const bed = $('bed');
   const cCut = cssVar('--cut'), cRapid = cssVar('--rapid'), cInk = cssVar('--ink');
   let svg = bedChrome();
-  let g = `<g transform="translate(0,${SHARED_GRID.H}) scale(1,-1)">`;
+  let g = `<g>`;
   g += `<g stroke="${cRapid}" stroke-width="0.25" stroke-dasharray="1 1" fill="none" opacity="0.7">`;
   for (const [a, b] of job.rapids) g += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
   g += `</g><g stroke="${cCut}" stroke-width="0.3" fill="none" stroke-linecap="round" stroke-linejoin="round">`;
@@ -374,7 +510,7 @@ function renderPrepare() {
   g += `</g><circle cx="0" cy="0" r="1.2" fill="${cCut}"/></g>`;
   bed.innerHTML = svg + g + headLayer();
   const [x0, y0, x1, y1] = job.bounds;
-  $('jobInfo').textContent = `${job.strokes.length} stroke${job.strokes.length === 1 ? '' : 's'} · ${m20.length} bytes`;
+  $('jobInfo').textContent = `${job.strokes.length} stroke${job.strokes.length === 1 ? '' : 's'} · ≈ ${formatDuration(jobDurationSec)} · ${m20.length} bytes`;
   $('bounds').textContent = `${(x1 - x0).toFixed(1)} × ${(y1 - y0).toFixed(1)} mm`;
 }
 
@@ -386,8 +522,42 @@ function renderObjectList() {
   for (const obj of scene.objects) {
     const li = document.createElement('li');
     li.className = 'obj-item' + (obj.id === selectedId ? ' sel' : '') + (obj.reference ? ' ref' : '');
-    li.textContent = obj.name;
-    li.onclick = () => { selectedId = obj.id; activeTool = 'select'; if (mode === 'edit') renderEdit(); renderObjectList(); $('delObjBtn').disabled = false; };
+
+    const name = document.createElement('span');
+    name.className = 'obj-name';
+    name.textContent = obj.name;
+    name.title = obj.name;
+    name.onclick = () => {
+      selectedId = obj.id; activeTool = 'select';
+      if (mode === 'edit') renderEdit();
+      renderObjectList();
+    };
+
+    const acts = document.createElement('span');
+    acts.className = 'obj-actions';
+
+    const eye = document.createElement('button');
+    eye.type = 'button';
+    eye.className = 'obj-icon' + (obj.reference ? ' on' : '');
+    eye.title = obj.reference
+      ? 'Reference only — won’t be engraved (click to engrave)'
+      : 'Will be engraved (click to make reference only)';
+    eye.innerHTML = obj.reference ? ICON.eyeOff : ICON.eye;
+    eye.onclick = (e) => {
+      e.stopPropagation();
+      obj.reference = !obj.reference;
+      renderEdit(); renderObjectList(); autosave();
+    };
+
+    const trash = document.createElement('button');
+    trash.type = 'button';
+    trash.className = 'obj-icon danger-icon';
+    trash.title = 'Delete object';
+    trash.innerHTML = ICON.trash;
+    trash.onclick = (e) => { e.stopPropagation(); requestDelete(obj.id); };
+
+    acts.append(eye, trash);
+    li.append(name, acts);
     ul.append(li);
   }
   $('delObjBtn').disabled = !selectedId || scene.objects.length === 0;
@@ -405,21 +575,104 @@ function updateObjPanel() {
   $('toolText').classList.toggle('active', activeTool === 'text');
   $('objectsEmpty').style.display = scene.objects.length ? 'none' : '';
   if (showObj) {
+    $('objType').textContent = objectTypeLabel(obj);
+    const isText = !!obj.source && obj.source.kind === 'text';
+    $('objTextEdit').style.display = isText ? '' : 'none';
+    if (isText) {
+      $('objTextValue').value = obj.source.text;
+      $('objTextFont').value = obj.source.font;
+    }
     $('objRot').value = Math.round((obj.transform.rotation * 180 / Math.PI) * 10) / 10;
     $('objScale').value = Math.round(obj.transform.scale * 1000) / 1000;
     const [bx0, by0, bx1, by1] = strokesBounds(worldStrokes(obj));
     $('objW').value = Math.round((bx1 - bx0) / 10) / 10;
     $('objH').value = Math.round((by1 - by0) / 10) / 10;
+    $('objX').value = Math.round(bx0 / 10) / 10;
+    $('objY').value = Math.round(by0 / 10) / 10;
     $('objRef').checked = !!obj.reference;
   }
 }
 
-function deleteSelected() {
-  if (!selectedId) return;
-  scene.objects = scene.objects.filter((o) => o.id !== selectedId);
-  selectedId = scene.objects.length ? scene.objects[scene.objects.length - 1].id : null;
+function deleteObject(id) {
+  if (!id) return;
+  scene.objects = scene.objects.filter((o) => o.id !== id);
+  if (selectedId === id) selectedId = scene.objects.length ? scene.objects[scene.objects.length - 1].id : null;
   autosave();
   toMode('edit');
+}
+
+// ── object type + text re-editing ──
+function objectTypeLabel(obj) {
+  const s = obj.source;
+  if (!s) return 'Strokes';
+  if (s.kind === 'text') return 'Text';
+  if (s.kind === 'shape') return ({ circle: 'Circle', square: 'Square', line: 'Line' })[s.shape] || 'Shape';
+  if (s.kind === 'import') return ({ gcode: 'G-Code', dxf: 'DXF', ggs: 'GGS', svg: 'SVG' })[s.format] || 'Import';
+  return 'Strokes';
+}
+
+let pendingCustomFor = null;   // object id awaiting a custom-font load (edit flow)
+
+// Regenerate a text object's strokes from its source (string/font/size),
+// keeping its lower-left corner anchored so it doesn't jump when edited.
+async function regenTextObject(obj) {
+  const src = obj.source;
+  let data;
+  try { data = await loadFontData(src.font); }
+  catch (e) { toast(e.message, 'warn'); return false; }
+  const size = Math.min(80, Math.max(1, src.size || 10));
+  const before = strokesBounds(worldStrokes(obj));
+  const r = src.font === 'engrave'
+    ? hersheyTextToStrokes(data, src.text, size, 0, 0)
+    : ttfTextToStrokes(data, src.text, size, 0, 0);
+  for (const w of r.warnings) toast(w, 'warn');
+  if (!r.strokes.length) { toast('No engraveable strokes in that text.', 'warn'); return false; }
+  obj.baseStrokes = flipStrokesY(r.strokes);   // keep upright in the Y-down machine frame
+  const after = strokesBounds(worldStrokes(obj));
+  obj.transform = { ...obj.transform, tx: obj.transform.tx + (before[0] - after[0]), ty: obj.transform.ty + (before[1] - after[1]) };
+  return true;
+}
+
+async function applyTextEdit() {
+  const obj = scene.objects.find((o) => o.id === selectedId);
+  if (!obj || !obj.source || obj.source.kind !== 'text') return;
+  const newText = $('objTextValue').value;
+  if (!newText.trim()) { toast('Text can’t be empty.', 'warn'); $('objTextValue').value = obj.source.text; return; }
+  if (newText === obj.source.text) return;
+  const prev = obj.source.text;
+  obj.source = { ...obj.source, text: newText };
+  if (!(await regenTextObject(obj))) { obj.source = { ...obj.source, text: prev }; $('objTextValue').value = prev; return; }
+  obj.name = newText.length > 18 ? newText.slice(0, 18) + '…' : newText;
+  renderEdit(); renderObjectList(); autosave();
+}
+
+async function applyFontEdit() {
+  const obj = scene.objects.find((o) => o.id === selectedId);
+  if (!obj || !obj.source || obj.source.kind !== 'text') return;
+  const f = $('objTextFont').value;
+  if (f === obj.source.font) return;
+  if (f === 'custom' && !customFont) { pendingCustomFor = obj.id; $('objTextFont').value = obj.source.font; $('fontFile').click(); return; }
+  const prev = obj.source.font;
+  obj.source = { ...obj.source, font: f };
+  if (!(await regenTextObject(obj))) { obj.source = { ...obj.source, font: prev }; $('objTextFont').value = prev; return; }
+  renderEdit(); renderObjectList(); autosave();
+}
+
+// delete is gated by a confirm dialog (Enter or the Delete button confirms)
+let pendingDeleteId = null;
+function requestDelete(id) {
+  const obj = scene.objects.find((o) => o.id === id);
+  if (!obj) return;
+  pendingDeleteId = id;
+  $('confirmMsg').textContent = `“${obj.name}” will be removed from the scene.`;
+  $('confirmModal').style.display = '';
+  $('confirmOk').focus();
+}
+function closeConfirm() { $('confirmModal').style.display = 'none'; pendingDeleteId = null; }
+function performDelete() {
+  const id = pendingDeleteId;
+  closeConfirm();
+  deleteObject(id);
 }
 
 // ── dragging objects by their bounding box ──
@@ -434,6 +687,7 @@ function attachDrag() {
       const obj = scene.objects.find((o) => o.id === id);
       if (!obj) return;
       ev.preventDefault();
+      ev.stopPropagation();   // don't let this reach the bed-background deselect handler
       if (reselect) { renderEdit(); renderObjectList(); }
       const startT = { ...obj.transform };
       // convert pointer movement (px) to mm via the SVG's current scale
@@ -443,11 +697,11 @@ function attachDrag() {
       const sx = ev.clientX, sy = ev.clientY;
       const onMove = (e) => {
         let dxmm = (e.clientX - sx) * mmPerPx;
-        let dymm = -(e.clientY - sy) * mmPerPx;   // screen down = machine -Y
+        let dymm = (e.clientY - sy) * mmPerPx;    // screen down = machine +Y (origin top-left)
         let dux = dxmm * 100, duy = dymm * 100;   // mm -> device units
         if (!e.shiftKey) { dux = Math.round(dux / 100) * 100; duy = Math.round(duy / 100) * 100; } // snap 1mm unless Shift
         obj.transform = { ...startT, tx: startT.tx + dux, ty: startT.ty + duy };
-        renderEdit();
+        renderEdit(); updateObjPanel();
       };
       const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); autosave(); };
       window.addEventListener('pointermove', onMove);
@@ -494,7 +748,7 @@ function attachDrag() {
         const [px, py] = bedPointMm(e);
         let s = startScale * (Math.hypot(px - cx, py - cy) / startDist);
         if (!e.shiftKey) s = Math.round(s / 0.05) * 0.05;
-        s = Math.min(50, Math.max(0.05, s));
+        s = Math.min(50, Math.max(0.001, s));
         obj.transform = { ...obj.transform, scale: s };
         renderEdit(); updateObjPanel();
       };
@@ -557,7 +811,7 @@ let hx = 0, hy = 0, headVisible = false;
 // lands at the live (X,Y). Re-emitted on every render so it survives mode
 // switches; moveHead() updates it in place during motion.
 function headLayer() {
-  const y = SHARED_GRID.H - hy;   // flip machine Y into SVG space
+  const y = hy;   // machine Y maps directly to SVG (origin top-left, +Y toward front = down)
   return `<g id="headLayer" style="display:${headVisible ? '' : 'none'}">` +
          `<circle id="headDot" cx="${hx}" cy="${y}" r="1.4" fill="#ff2d2d" stroke="#fff" stroke-width="0.25"/>` +
          `<circle cx="${hx}" cy="${y}" r="2.6" fill="none" stroke="#ff2d2d" stroke-width="0.2" opacity="0.5"/></g>`;
@@ -569,7 +823,7 @@ function moveHead(x, y) {
   const dot = document.getElementById('headDot');
   if (!layer || !dot) return;
   layer.style.display = '';
-  const svgY = SHARED_GRID.H - hy;
+  const svgY = hy;
   layer.querySelectorAll('circle').forEach((c) => { c.setAttribute('cx', hx); c.setAttribute('cy', svgY); });
 }
 
@@ -581,6 +835,7 @@ function saveScene() {
     metadata: { created: new Date().toISOString() },
     objects: scene.objects.map((o) => ({
       name: o.name, transform: o.transform, reference: o.reference || false,
+      source: o.source || null,
       baseStrokes: o.baseStrokes.map((s) => ({ start: s.start, deltas: s.deltas })),
     })),
   };
@@ -654,7 +909,7 @@ function init() {
     if (activeTool === 'text') $('textValue').focus();
   };
 
-  for (const id of ['speed', 'depth', 'optimise', 'flipy']) {
+  for (const id of ['speed', 'depth', 'optimise']) {
     $(id).addEventListener('change', autosave);
   }
   $('objRot').addEventListener('change', () => {
@@ -666,11 +921,27 @@ function init() {
   $('objScale').addEventListener('change', () => {
     const obj = scene.objects.find((o) => o.id === selectedId);
     if (!obj) return;
-    const s = Math.min(50, Math.max(0.05, +$('objScale').value || 1));
+    const s = Math.min(50, Math.max(0.001, +$('objScale').value || 1));
     $('objScale').value = s;
     obj.transform = { ...obj.transform, scale: s };
     renderEdit(); autosave();
   });
+  const setObjPos = (axis) => {
+    const obj = scene.objects.find((o) => o.id === selectedId);
+    if (!obj) return;
+    const [bx0, by0] = strokesBounds(worldStrokes(obj));   // current world min corner (units)
+    const curMm = (axis === 'x' ? bx0 : by0) / 100;
+    const target = +$(axis === 'x' ? 'objX' : 'objY').value;
+    if (!Number.isFinite(target)) { updateObjPanel(); return; }
+    // tx/ty translate in world space, so shifting by (target - current) lands the
+    // bounding-box corner exactly on the requested coordinate.
+    const deltaUnits = Math.round((target - curMm) * 100);
+    const key = axis === 'x' ? 'tx' : 'ty';
+    obj.transform = { ...obj.transform, [key]: obj.transform[key] + deltaUnits };
+    renderEdit(); updateObjPanel(); autosave();
+  };
+  $('objX').addEventListener('change', () => setObjPos('x'));
+  $('objY').addEventListener('change', () => setObjPos('y'));
   const scaleToDimension = (which) => {
     const obj = scene.objects.find((o) => o.id === selectedId);
     if (!obj) return;
@@ -678,7 +949,7 @@ function init() {
     const currentMm = (which === 'w' ? bx1 - bx0 : by1 - by0) / 100;
     const target = +$(which === 'w' ? 'objW' : 'objH').value;
     if (!(currentMm > 0) || !(target > 0)) { updateObjPanel(); return; }
-    const s = Math.min(50, Math.max(0.05, obj.transform.scale * (target / currentMm)));
+    const s = Math.min(50, Math.max(0.001, obj.transform.scale * (target / currentMm)));
     obj.transform = { ...obj.transform, scale: s };
     renderEdit(); renderObjectList(); autosave();
   };
@@ -693,9 +964,10 @@ function init() {
   window.addEventListener('keydown', (e) => {
     const tag = (document.activeElement || {}).tagName || '';
     if ((e.key === 'Delete' || e.key === 'Backspace') && mode === 'edit'
-        && selectedId && !/INPUT|TEXTAREA/.test(tag)) {
+        && selectedId && !/INPUT|TEXTAREA/.test(tag)
+        && $('confirmModal').style.display === 'none') {
       e.preventDefault();
-      deleteSelected();
+      requestDelete(selectedId);
     }
   });
   $('addTextBtn').onclick = addText;
@@ -703,43 +975,94 @@ function init() {
   $('textFont').addEventListener('change', () => {
     if ($('textFont').value === 'custom' && !customFont) $('fontFile').click();
   });
+  // re-edit an existing text object's string / font from the Object panel
+  $('objTextValue').addEventListener('change', applyTextEdit);
+  $('objTextValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+  $('objTextFont').addEventListener('change', applyFontEdit);
   $('fontFile').addEventListener('change', () => {
     const f = $('fontFile').files[0];
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
       customFont = { name: f.name, data: new Uint8Array(rd.result) };
-      const opt = $('textFont').querySelector('option[value="custom"]');
-      opt.textContent = `Custom: ${f.name}`;
+      for (const selId of ['textFont', 'objTextFont']) {
+        const opt = $(selId).querySelector('option[value="custom"]');
+        if (opt) opt.textContent = `Custom: ${f.name}`;
+      }
       toast(`Loaded ${f.name} — parsed locally, never uploaded.`, 'ok');
+      if (pendingCustomFor) {
+        const obj = scene.objects.find((o) => o.id === pendingCustomFor);
+        pendingCustomFor = null;
+        if (obj && obj.source && obj.source.kind === 'text') {
+          obj.source = { ...obj.source, font: 'custom' };
+          regenTextObject(obj).then((ok) => { if (ok) { $('objTextFont').value = 'custom'; renderEdit(); renderObjectList(); autosave(); } });
+        }
+      }
     };
     rd.readAsArrayBuffer(f);
   });
   $('toolCircle').onclick = () => addShape('circle');
   $('toolSquare').onclick = () => addShape('square');
   $('toolLine').onclick = () => addShape('line');
+  $('toolMirrorH').onclick = () => mirrorSelected('x');
+  $('toolMirrorV').onclick = () => mirrorSelected('y');
   $('newSceneBtn').onclick = newSceneAction;
-  $('delObjBtn').onclick = deleteSelected;
+  $('delObjBtn').onclick = () => requestDelete(selectedId);
   // prepareBtn click handler is set in toMode() since it toggles
   $('token').addEventListener('input', () => { pollMachine(); refreshSendButton(); });
   $('trueScale').addEventListener('change', (e) => {
     $('bed').classList.toggle('true-scale', e.target.checked);
     document.querySelector('.bed-wrap').classList.toggle('true-scale', e.target.checked);
   });
-  $('machinePill').addEventListener('click', () => {
-    if ($('machinePill').classList.contains('cta')) showPairingHelp();
+  // click empty bed → deselect, so “nothing selected” is always reachable
+  $('bed').addEventListener('pointerdown', (ev) => {
+    if (mode !== 'edit') return;
+    if (ev.target.closest('.obj, .bbox, .rot-handle, .scale-handle')) return;
+    if (selectedId !== null || activeTool === 'text') {
+      selectedId = null; activeTool = 'select';
+      renderEdit(); renderObjectList();
+    }
   });
   $('sendBtn').onclick = sendJob;
   $('saveBtn').onclick = saveScene;
   $('reportBtn').onclick = reportMachine;
-  // legal & attribution modal
-  const legal = $('legalModal');
-  const openLegal = () => { legal.style.display = ''; };
-  const closeLegal = () => { legal.style.display = 'none'; };
-  $('legalBtn').onclick = openLegal;
-  $('legalClose').onclick = closeLegal;
-  legal.addEventListener('click', (e) => { if (e.target === legal) closeLegal(); });
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && legal.style.display !== 'none') closeLegal(); });
+  // modals (legal & attribution, about, pairing) — shared open/close + backdrop + Escape
+  const wireModal = (id, openBtnId) => {
+    const m = $(id);
+    if (openBtnId) $(openBtnId).onclick = () => { m.style.display = ''; };
+    m.querySelector('.modal-close').onclick = () => { m.style.display = 'none'; };
+    m.addEventListener('click', (e) => { if (e.target === m) m.style.display = 'none'; });
+  };
+  wireModal('legalModal', 'legalBtn');
+  wireModal('aboutModal', 'aboutBtn');
+  wireModal('pairModal', 'pairHelpBtn');
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if ($('confirmModal').style.display !== 'none') return;   // the confirm dialog owns Escape while open
+    let closedAny = false;
+    for (const id of ['legalModal', 'aboutModal', 'pairModal']) {
+      const m = $(id); if (m && m.style.display !== 'none') { m.style.display = 'none'; closedAny = true; }
+    }
+    if (closedAny) return;
+    // nothing open → Escape backs out of the current selection
+    const tag = (document.activeElement || {}).tagName || '';
+    if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
+    if (mode === 'edit' && (selectedId !== null || activeTool === 'text')) {
+      selectedId = null; activeTool = 'select';
+      renderEdit(); renderObjectList();
+    }
+  });
+
+  // delete-confirmation dialog: Enter confirms, Escape/Cancel/backdrop dismisses
+  $('confirmOk').onclick = performDelete;
+  $('confirmCancel').onclick = closeConfirm;
+  $('confirmClose').onclick = closeConfirm;
+  $('confirmModal').addEventListener('click', (e) => { if (e.target === $('confirmModal')) closeConfirm(); });
+  window.addEventListener('keydown', (e) => {
+    if ($('confirmModal').style.display === 'none') return;
+    if (e.key === 'Enter') { e.preventDefault(); performDelete(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeConfirm(); }
+  });
 
   initTheme();
   const saved = loadPaired();

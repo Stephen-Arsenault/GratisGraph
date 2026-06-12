@@ -225,7 +225,7 @@ export function gcodeToStrokes(moves: GMove[], opts: StrokesOptions = {}): Strok
     if (maxX > physX || maxY > physY) {
       throw new Error(
         `Job exceeds work envelope (${envX.toFixed(0)}x${envY.toFixed(0)}mm). ` +
-        `Adjust your job origin. Home (0,0) is the front-left corner.`,
+        `Adjust your job origin. Home (0,0) is the back-left corner (nearest the gantry).`,
       );
     }
   }

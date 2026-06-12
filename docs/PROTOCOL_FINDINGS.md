@@ -79,9 +79,9 @@ stall detection are feasible features.
 
 ## Coordinate System (Confirmed from Hardware)
 
-- **Home (0,0) = front-left corner** of work area
-- **+X = tool moves right**
-- **+Y = table moves backward** (away from operator)
+- **Home (0,0) = back-left corner** of work area (nearest the gantry, farthest from the operator; top-left from the operator's view)
+- **+X = mark moves right**
+- **+Y = mark moves toward the operator** (the table translates away from the operator; confirmed with a felt-tip marker fiducial — supersedes the earlier provisional "front-left, +Y to back" reading)
 - **1 unit = 0.01mm** (`UNITS_PER_MM = 100`) — confirmed from hardware: 20mm square measured 20mm, 90mm wordmark measured 90mm
 - **Software work envelope:** 100 × 100mm
 - **Physical envelope:** ~120 × 120mm (conservative safe limit)

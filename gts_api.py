@@ -6,8 +6,8 @@ Machine constants, GTS binary builder, USB communication layer (GTSConnection),
 and macOS kext manager. Import this from test scripts and the translator.
 
 Protocol state:
-  - Home = front-left (confirmed hardware)
-  - +X = right, +Y = backward — no axis inversion needed
+  - Home = back-left, nearest the gantry (confirmed hardware: marker fiducial)
+  - +X = right, +Y = toward the operator (table translates away) — no axis inversion needed
   - USB VID=0xFFFD PID=0x0001, EP OUT=0x01, EP IN=0x82
   - Machine queues jobs and waits for green button — does NOT auto-execute on receipt
   - Machine holds the last job in buffer after execution — pressing green again re-runs it

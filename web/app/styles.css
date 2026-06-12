@@ -14,6 +14,7 @@
   --cut:        #ff6a3d;   /* THE accent: the engraved line / active toolpath */
   --cut-dim:    #b34624;
   --rapid:      #3a6ea5;   /* pen-up rapid moves (cool, recedes) */
+  --ctrl:       #2dd4bf;   /* manipulation handles — never used for the toolpath */
   --ok:         #4a9e6f;
   --warn:       #d9a441;
   --r: 7px;
@@ -33,6 +34,7 @@
   --cut:        #e8551f;   /* slightly deeper so it reads on white */
   --cut-dim:    #b34624;
   --rapid:      #3a6ea5;
+  --ctrl:       #0d9488;
   --ok:         #2f8f5b;
   --warn:       #b8860b;
 }
@@ -67,7 +69,8 @@ header {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 600; letter-spacing: -0.02em; font-size: 15px; }
+.brand { font-weight: 600; letter-spacing: -0.02em; font-size: 15px; cursor: pointer; background: none; border: none; color: var(--ink); font-family: var(--ui); padding: 0; }
+.brand:hover b { color: #ff7d55; }
 .brand b { color: var(--cut); }
 .status-pill {
   margin-left: auto;
@@ -77,6 +80,7 @@ header {
   user-select: none; -webkit-user-select: none;
 }
 .status-pill.cta { cursor: pointer; }   /* keep the clickable CTA feeling actionable */
+.status-pill .pipe { color: var(--ink-faint); margin: 0 2px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); }
 .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
@@ -209,6 +213,25 @@ button.ghost { background: transparent; }
 .status-pill.cta.bad { border-color: #d9534f; color: #e0716d; }
 .status-pill.cta.bad:hover { background: rgba(217,83,79,.08); }
 
+/* ── pairing bar (anchored at the bottom, with the machine controls) ── */
+.pair-bar { min-height: 34px; display: flex; align-items: center; }
+.pair-input { display: flex; gap: 6px; align-items: stretch; width: 100%; }
+.pair-input input {
+  flex: 1; background: var(--bed); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 7px 9px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.18em;
+  -webkit-text-security: disc; text-security: disc;   /* mask without being a password field (no browser save prompt) */
+}
+.pair-input input:focus { outline: none; border-color: var(--cut); }
+.pair-input input::placeholder { letter-spacing: normal; color: var(--ink-faint); }
+.pair-help {
+  width: 34px; flex: 0 0 34px; padding: 0;
+  display: grid; place-items: center;
+  font-family: var(--mono); color: var(--ink-dim);
+}
+.pair-help:hover { color: var(--cut); border-color: var(--cut); }
+.pair-bar .pair-done { width: 100%; }
+
 /* true-scale (1:1) mode — bed sized in real mm; wrapper scrolls if larger than view.
    ~3.78px per mm is the CSS reference (96dpi); the bed is 114mm incl. margins. */
 .bed-wrap.true-scale { place-items: start; overflow: auto; }
@@ -217,11 +240,22 @@ button.ghost { background: transparent; }
 /* ── scene editor UI ── */
 .object-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .obj-item {
-  font-size: 13px; padding: 6px 9px; border-radius: 5px; cursor: pointer;
+  font-size: 13px; padding: 3px 4px 3px 9px; border-radius: 5px; cursor: pointer;
   color: var(--ink-dim); border: 1px solid transparent;
+  display: flex; align-items: center; gap: 4px;
 }
 .obj-item:hover { background: var(--panel-2); }
 .obj-item.sel { color: var(--ink); border-color: var(--cut); background: rgba(255,106,61,.06); }
+.obj-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obj-actions { display: flex; gap: 1px; flex: 0 0 auto; }
+.obj-icon {
+  width: 24px; height: 22px; padding: 0; border: 1px solid transparent; background: none;
+  display: grid; place-items: center; color: var(--ink-faint); border-radius: 4px;
+}
+.obj-icon svg { width: 14px; height: 14px; display: block; }
+.obj-actions .obj-icon:hover { color: var(--ink); background: var(--bed); border-color: transparent; }
+.obj-icon.on { color: var(--rapid); }                 /* eye active = reference (matches the blue on the bed) */
+.obj-actions .danger-icon:hover { color: #e0716d; }
 
 .mode-label {
   font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 100px;
@@ -258,7 +292,14 @@ input, textarea, .selectable {
 .section-label-row + .object-list { margin-top: 9px; }
 #settingsCard { border-top: 1px solid var(--line); padding-top: 14px; }
 
-.obj-item.ref { opacity: .55; font-style: italic; }
+.obj-item.ref .obj-name { opacity: .55; font-style: italic; }
+
+.obj-panel-head { display: flex; align-items: baseline; justify-content: space-between; }
+.obj-panel-head .section-label { margin-bottom: 9px; }
+.obj-type {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink-faint); border: 1px solid var(--line); border-radius: 100px; padding: 2px 8px;
+}
 
 /* ── legal & attribution ── */
 .legal-link {
@@ -298,3 +339,9 @@ input, textarea, .selectable {
 .legal-fonts li { color: var(--ink-dim); padding: 3px 0; border-bottom: 1px solid var(--line); }
 .legal-fonts li:last-child { border-bottom: none; }
 .modal-body code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+
+/* small confirm dialog (delete, etc.) */
+.modal-sm { max-width: 380px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
+button.danger { background: #d9534f; border-color: #d9534f; color: #fff; font-weight: 600; }
+button.danger:hover:not(:disabled) { background: #e0655f; border-color: #e0655f; }

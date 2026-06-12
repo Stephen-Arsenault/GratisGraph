@@ -8,7 +8,8 @@
  * warning. Output strokes are in device units (0.01mm), quantise-then-
  * subtract like gcode.ts so deltas stay consistent with the engine.
  *
- * Coordinates: DXF is Y-up; the machine is Y-up (origin front-left). No flip.
+ * Coordinates: DXF is Y-up. This parser emits Y-up as-is; the app flips Y into
+ * the machine's Y-down frame (home top-left) at import time.
  * Units: $INSUNITS 4=mm, 1=inch, 0/absent=unitless (assumed mm). A caller-
  * supplied scale multiplies on top for the "import scale" affordance.
  *
@@ -146,10 +147,12 @@ export function parseDxf(text: string, opts: DxfOptions = {}): DxfResult {
   const skipped = new Map<string, number>();
 
   const readEntity = (start: number): [Record<number, string[]>, number] => {
-    // gather codes until next 0
+    // gather codes until the next 0. Stop at the FIRST code-0 at or after start:
+    // a zero-code entity (e.g. a bare SEQEND) leaves `start` pointing straight at
+    // the next entity's 0, and we must not consume it.
     const rec: Record<number, string[]> = {};
     let j = start;
-    while (j < pairs.length && !(j > start && pairs[j]!.code === 0)) {
+    while (j < pairs.length && pairs[j]!.code !== 0) {
       const p = pairs[j]!;
       (rec[p.code] ||= []).push(p.value);
       j++;
