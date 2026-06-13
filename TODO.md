@@ -1,7 +1,7 @@
 # TODO
 
 Single source of truth for task tracking. Update here, not in scattered docs.
-Last updated: 2026-06-09 (post code-review session).
+Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon).
 
 ## Decisions needed (Steve)
 
@@ -200,16 +200,48 @@ Last updated: 2026-06-09 (post code-review session).
       $INSUNITS scaling, skip-with-warning for the rest. Chord tol 0.02mm.
       10 geometric tests (no Python oracle for this module — known-shape →
       known-coordinate asserts). Wired into addFile (.dxf accepted).
-      SVG still open (path/d, shapes, transforms, viewBox units; text/fills
-      out of scope v1). NEEDS: real CAD-exported DXF acceptance files from
-      Steve — hand-built fixtures pass, real exports are messier.
+      SVG DONE 2026-06-12 (parseSvgToStrokes in app.js — browser-native
+      flattening via getPointAtLength + getCTM, splits subpaths at pen-up
+      jumps, skips defs/markers; SVG is Y-down = machine frame, no flip;
+      text/fills still out of scope v1). Real CAD-export acceptance DONE
+      2026-06-12: GratisGraph.dxf (22 polylines) + betterbit_wordmark.dxf
+      (11) both engraved on hardware after fixing the SEQEND parser bug —
+      legacy POLYLINEs end with a zero-code SEQEND, so readEntity's
+      "don't stop on the first 0" guard swallowed each following POLYLINE
+      header and only the first survived. Guard removed; all 10 dxf tests
+      still pass; engine rebuilt.
       (2) MED: Same-origin serving — fold app/ into gts_server (kills CORS
       flags, two terminals, per-origin localStorage split; ~20 LOC static
       handler + traversal guard; one-time re-pair on origin move).
       (3) LOW: Head-position dot — !MX/MY/MZ value is a motion COUNTER not a
       position (gts_api 150/1391); jog streaming unconfirmed. Options: !OR
       static marker / motion indicator / drop.
-      (4) LOW: Favicon — pick C or F from mockups, wire favicon.svg/.ico.
+      (4) Favicon — DONE 2026-06-12: themed favicon.svg ("G" monogram,
+      @media prefers-color-scheme for OS dark/light) + <link> in index.html.
+      ALSO DONE 2026-06-12 (web UI polish — app.js/index.html/styles.css,
+      no engine rebuild except dxf.ts):
+        - Text orientation: fonts are Y-up; flipped into the Y-down machine
+          frame + centred on the bed. Verified on hardware — "F" engraves
+          upright AND matches the canvas (WYSIWYG).
+        - Mirror tools: horizontal/vertical buttons in the toolbar (mirror
+          selected object about its local centre, world position preserved).
+          The old "Flip Y (LightBurn)" toggle was removed.
+        - Estimated duration shown in Prepare (port of gts_optimise.
+          estimate_duration: VS*0.995 mm/s, 0.5s Z-dwell/stroke, rapid=1.0).
+        - Imports scale-to-fit (~90mm) + centre on the bed.
+        - Object scale floor lowered 0.05 -> 0.001 (field + gizmo) for very
+          large DXFs.
+        - Pairing-token field no longer triggers Chrome's save-password
+          prompt: type=password -> type=text masked via CSS
+          -webkit-text-security + data-1p-ignore/data-lpignore.
+        - Coordinate docs/strings corrected to the marker-confirmed mapping
+          (home = BACK-left / nearest the gantry, +Y toward the operator) in
+          gcode.ts, gts_translator.py, GTS_FORMAT.md, PROTOCOL_FINDINGS.md,
+          STROKE_SCHEMA.md, gts_api.py, gts_prepare.py, dxf.ts.
+      STILL OPEN under Step 4: (2) same-origin serving, (3) head-position
+      dot. Loose threads (untracked, low priority): DXF open-polyline
+      auto-close (only if a wordmark shows a gap); G-code import Y
+      convention (deferred).
 - [ ] **Single C server for ALL platforms** (Steve's proposal, DECIDED
       2026-06-09; replaces the XP-only C sender). The TS-engine decision makes
       this strictly better: with protocol interpretation in the browser
