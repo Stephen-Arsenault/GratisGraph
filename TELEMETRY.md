@@ -1,7 +1,6 @@
 # Telemetry
 
-**Status:** Idea — not yet implemented  
-**Last updated:** Session 8
+**Status:** SUPERSEDED 2026-06-09 - GratisGraph collects no automated telemetry, by design (rationale below).
 
 ---
 

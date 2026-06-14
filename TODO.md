@@ -1,7 +1,7 @@
 # TODO
 
 Single source of truth for task tracking. Update here, not in scattered docs.
-Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon).
+Last updated: 2026-06-14 (release-review remediation: SSE ticket auth, MC/telemetry/profile doc fixes).
 
 ## Decisions needed (Steve)
 
@@ -38,14 +38,7 @@ Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon)
       (not machine-coords); PZ = engraving depth (Quick drives it from its depth
       field, 0.01"->PZ 25, 0.99"->PZ 100); material = pass-count, not a wire
       depth param; Quick's ident = our !ID 0; ×3 + !1B. See findings doc
-      'Gravograph Quick Capture Findings'. Serial-number question NOT answered
-      (no !ID model_code_alt readback seen) — would need the set-center captures
-      decoded further; deferred.
-- [ ] Decode remaining Quick captures deeper if curious: 11_set_center_xy
-      (machine->host position report, the direction we've never seen — showed 0
-      EP1 bulk, so it's likely EP0/control or a different path), 13's anomalous
-      ~500KB job size, and !1B semantics. Low priority — format is confirmed.
-      Answers the serial-number question (`model_code_alt` vs separate command).
+      'Gravograph Quick Capture Findings'. Serial-number question RESOLVED 2026-06-13 (Steve): the machine does NOT relay a serial number to Quick (no SN readback on the wire).
 - [x] Multi-stroke wire format validated directly on hardware 2026-06-09 —
       stronger than a Gravostyle capture comparison (which is now optional
       corroboration if one ever turns up).
@@ -106,6 +99,13 @@ Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon)
       is superseded — Steve to refresh/replace it there.
 - [x] Pre-merge checklist — satisfied 2026-06-09: the `.job` section was
       excluded from the repo export entirely.
+- [ ] **User-facing docs** — there is effectively no end-user documentation yet
+      (README is dev-oriented). When written (Quickstart: install the tray or
+      run the server, pair, open gratisgraph.com, send a job), include:
+      (a) the pairing token is a LOCAL loopback secret, not an account
+      credential — it never leaves the machine and only gates 127.0.0.1;
+      (b) the macOS one-time sudo/kext-detach step; (c) where support captures
+      come from (gts_capture.py). [from RELEASE_REVIEW 3.5]
 
 ## Web MVP roadmap (in order)
 
@@ -210,9 +210,6 @@ Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon)
       "don't stop on the first 0" guard swallowed each following POLYLINE
       header and only the first survived. Guard removed; all 10 dxf tests
       still pass; engine rebuilt.
-      (2) MED: Same-origin serving — fold app/ into gts_server (kills CORS
-      flags, two terminals, per-origin localStorage split; ~20 LOC static
-      handler + traversal guard; one-time re-pair on origin move).
       (3) LOW: Head-position dot — !MX/MY/MZ value is a motion COUNTER not a
       position (gts_api 150/1391); jog streaming unconfirmed. Options: !OR
       static marker / motion indicator / drop.
@@ -238,21 +235,18 @@ Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon)
           (home = BACK-left / nearest the gantry, +Y toward the operator) in
           gcode.ts, gts_translator.py, GTS_FORMAT.md, PROTOCOL_FINDINGS.md,
           STROKE_SCHEMA.md, gts_api.py, gts_prepare.py, dxf.ts.
-      STILL OPEN under Step 4: (2) same-origin serving, (3) head-position
-      dot. Loose threads (untracked, low priority): DXF open-polyline
+      STILL OPEN under Step 4: head-position dot (low - !MX/MY/MZ is a motion counter, not a position). Loose threads (untracked, low priority): DXF open-polyline
       auto-close (only if a wordmark shows a gap); G-code import Y
       convention (deferred).
 - [ ] **Single C server for ALL platforms** (Steve's proposal, DECIDED
-      2026-06-09; replaces the XP-only C sender). The TS-engine decision makes
+      2026-06-09; replaces the XP-only C sender). STATUS 2026-06-13: XP dropped, so the XP-only justification is void; Windows now ships as a PyInstaller Python onefile (Win10/11, see Distribution & ops). This C dumb-pipe server is DEFERRED - remaining rationale is static ~300KB binaries + no AV-flag tax. DECIDE: keep as a future optimisation or drop. The TS-engine decision makes
       this strictly better: with protocol interpretation in the browser
       (hot-updatable), the server needs ZERO GTS knowledge — no packet
       parser (a C parser would have been the forbidden third), no /machine,
       no profiles, no completion logic. Scope, frozen by design: loopback
       HTTP via civetweb (MIT — NOT mongoose, GPLv2-only conflicts with our
       GPLv3), token auth + lockout, POST /write (opaque bytes → EP OUT),
-      GET /stream (raw EP IN relay), status. libusb everywhere incl.
-      libusb-win32 on XP — C is the only honest XP option (Rust/Go dropped
-      it). ~1–1.5k LOC, static binaries ~300KB, no PyInstaller AV-flag tax.
+      GET /stream (raw EP IN relay), status. libusb everywhere. ~1–1.5k LOC, static binaries ~300KB, no PyInstaller AV-flag tax.
       gts_server.py is DEMOTED, not deleted: reference implementation + dev
       server. Define the HTTP contract as docs/SERVER_CONTRACT.md; the
       existing HTTP test suite becomes the shared black-box conformance
@@ -263,6 +257,81 @@ Last updated: 2026-06-12 (web UI session: parsers, mirror, orientation, favicon)
       C server as drop-in. Memory-safety posture: civetweb parses HTTP,
       handlers are 5 fixed routes, GTS bytes stay opaque, loopback-only,
       fuzz the handlers.
+
+## Distribution & ops (2026-06-13 session)
+
+Hosting, mirroring, donations, feedback, cross-platform packaging. Full rationale
+is in the session handoff doc; this is the action tracker.
+
+### Decided
+- [x] **Hosting -> Cloudflare Pages.** Remote (not same-origin, not GitHub Pages)
+      so the web app hot-updates on git push. gratisgraph.com LIVE: zone Active,
+      custom domain working, loads on mobile. Build: root `web`, cmd
+      `npm install && npm run build`, output `app`, NODE_VERSION=22 (engine is
+      gitignored -> built on deploy). Consequence: the bridge must do CORS +
+      Private Network Access for the hosted origin (action below).
+- [x] **macOS tray -> arm64-only (Apple Silicon, M1+).** No Intel/universal.
+      macOS 26 is the last Intel macOS; 27 is ARM-only; Rosetta is Intel->ARM
+      only, so an arm64 app won't launch on Intel. Intel holdouts can run
+      gts_server.py from source + the web app.
+- [x] **Windows tray -> PyInstaller x64 onefile, Python 3.13/3.14, Win10/11
+      only.** Dropped XP and 8/8.1. Bundle libusb-1.0.dll. ARM Windows runs x64
+      via emulation. (Reconcile vs the DEFERRED C server above.)
+- [x] **Donations -> Ko-fi.** No donor account, one-time tips, 0% on the free
+      tier (the friction priority). Rejected GitHub Sponsors (donor needs an
+      account) and Liberapay (donor account + recurring-only, despite the values
+      appeal). Card rails still ride Stripe/PayPal (freeze risk); optional crypto
+      hedge. Ko-fi bio drafted (in handoff).
+- [x] **Feature requests -> GitHub Discussions (Ideas)** + in-app Feedback link,
+      kept separate from bug reports. Revisit a Cloudflare Worker + Turnstile
+      form only if non-GitHub users prove a meaningful segment.
+- [x] **Hardware/coverage -> capture-by-proxy first.** Owners run the existing
+      sniffer + gts_capture.py on machines they own and send captures (scales,
+      zero shipping/customs). Physical gear: prefer a Ko-fi goal to fund a used
+      M40 over shipping; prefer gifts over loans (the "hardware owned by the
+      authors" legal framing stays clean). IM4E is a separate serial-protocol
+      project - take if offered, don't chase.
+
+### Actions (next desktop session)
+- [ ] **Commit the uncommitted tray work FIRST:** gts_api.py, tray/usb_helper.py,
+      tray/gts_tray.py, tray/make_icon.py, tray/setup_app.py, tray/resources/,
+      .gitignore, TODO.md -> one commit + push.
+- [ ] **macOS tray finalize:** fix `_copy` -> real clipboard via `pbcopy` (today
+      it only notifies); add bridge CORS + PNA (gts_server allow-lists
+      https://gratisgraph.com, answers the OPTIONS preflight, returns
+      `Access-Control-Allow-Private-Network: true`; tray run() defaults
+      `--allow-origin https://gratisgraph.com`) -- THIS is what stops the hosted
+      app saying "server offline"; rebuild the .app (arm64).
+- [ ] **Windows tray:** build the PyInstaller onefile; bundle libusb DLL; solve
+      the usbprint.sys vs WinUSB claim (libusbK/Zadig) - the Windows analog of
+      the macOS kext-detach.
+- [ ] **Cloudflare/web:** add web/app/_headers (`Cache-Control: must-revalidate`)
+      for instant updates; optional CSP with the bridge in connect-src.
+- [ ] **GitLab mirror:** one-time GitHub->GitLab import now (snapshot); GitHub
+      Action push-mirror (.github/workflows/mirror.yml + GITLAB_TOKEN secret -
+      secret needs Safari desktop mode, can't be set from the GitHub mobile app).
+- [ ] **Feature-request wiring:** Discussions Ideas category + Feedback link in
+      the web-app About modal (app version auto-prefilled for triage).
+- [ ] **Donations wiring:** claim the Ko-fi page (reserves the handle); add a
+      Donate link in the About modal + `ko_fi:` in .github/FUNDING.yml (also
+      gives the repo a Sponsor button).
+- [ ] **Hardware program:** "Help expand coverage" wishlist in README + web app,
+      each item tied to the capability it unlocks (M40 -> confirm M40 profile;
+      M20 Jewel -> confirm negate-X; spindle -> map spindle vs solenoid Z).
+- [ ] **Housekeeping:** delete the `backup/pre-squash` git branch if it still
+      exists; keep `RELEASE_REVIEW.md` untracked.
+
+### Files to stage (offered, not yet written)
+mirror.yml (GitHub->GitLab push-mirror) | web/app/_headers (cache-control +/-
+CSP) | .github/FUNDING.yml (ko_fi:) | About-modal snippet (Feedback + Donate).
+
+### Exploratory
+- [ ] **iPad DriverKit dext** - M-series iPad only, iPadOS 16+; a new native C++
+      codebase (the Mac uses libusb, nothing to "port"); App Store distribution
+      + review + $99/yr; the distribution entitlement is Apple-granted per-team.
+      Caveat: the App Store is the most centralized/easily-pulled channel - treat
+      as a convenience, not the resilient core. Upside: the dext matches the M20
+      by VID:PID directly, likely sidestepping the kextunload-as-root dance.
 
 ## Long horizon
 

@@ -177,7 +177,7 @@ M20, M20 XL, M20 IQ, M20 XL IQ, M20 PIX, M20 Jewel, M20 Jewel 2, M20 Jewel IQ, M
 | M10 Jewel | `XyzMul=-400` — negate X | `M10_JEWEL_PROFILE` |
 | IS400 IQ | `XyzMul=500` — scale × 1.25 | `IS400_IQ_PROFILE` |
 
-Both derived from GT Smartstream INF/GPD files, never confirmed on live hardware.
+Both read from the published GT Smartstream INF/GPD files, never confirmed on live hardware.
 
 ### Not Compatible
 | Machine | Reason |

@@ -31,8 +31,6 @@ htmlcov/
 *.swo
 *~
 
-# Backup directory — pre-restructure files, not for public repo
-backup/
 
 # Data files — reference captures and test assets
 # (regression/ captures are committed intentionally)
@@ -45,6 +43,8 @@ data/*.dxf
 # Generated output files
 *.m20
 *.svg
+# ...but the committed web-app favicon must survive the blanket *.svg rule above
+!web/app/favicon.svg
 
 # USB sniffer captures
 *.bin
@@ -60,3 +60,9 @@ data/summarise_capture.py
 data/*.gcode
 data/analyse_motion_audio.py
 data/README_analyse_motion_audio.md
+
+# macOS menu-bar app build outputs
+tray/build/
+tray/dist/
+tray/build-venv/
+tray/resources/*.iconset/

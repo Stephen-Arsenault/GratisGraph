@@ -48,6 +48,7 @@ from dataclasses import dataclass
 import time
 import threading
 import queue
+import os
 import subprocess
 import platform
 from typing import List, Tuple, Optional
@@ -312,7 +313,7 @@ def _gts_setup(speed: int = DEFAULT_SPEED,
     """Build the setup command block. Values confirmed from 00013.m20."""
     return (
         _cmd(b'DR', 0)    +
-        _cmd(b'MC', 0)    +
+        _cmd(b'MC', 0)    +  # MC: spindle (0=off/diamond drag, 1=rotary on)
         _cmd(b'VS', speed) +
         _cmd(b'VZ', speed) +   # VZ = VS (same value, confirmed)
         _cmd(b'PZ', pz)   +
@@ -506,7 +507,7 @@ def build_home_gts() -> bytes:
     """
     return (_gts_header()
             + _cmd(b'DR', 0)
-            + _cmd(b'MC', 0)
+            + _cmd(b'MC', 0)  # MC: spindle (0=off/diamond drag, 1=rotary on)
             + _cmd(b'PU', 1)
             + _cmd(b'JF', 0))
 
@@ -569,6 +570,8 @@ class KextManager:
     """
 
     KEXT_ID = 'com.apple.driver.AppleUSBPrinter'
+    KEXTUNLOAD = '/sbin/kextunload'
+    KEXTLOAD = '/sbin/kextload'
 
     def __init__(self, verbose: bool = True):
         self.verbose       = verbose
@@ -592,6 +595,23 @@ class KextManager:
         except Exception:
             return False
 
+    def _sudo_prefix(self) -> list:
+        """How to elevate the kext command.
+
+        - Already root (the classic `sudo python3 ...` workflow): no prefix.
+        - Otherwise: `sudo -n` (non-interactive). With the one-time USB helper
+          installed (tray/usb_helper.py), the scoped sudoers rule lets these
+          two exact commands run password-free. Without it, `-n` fails fast
+          instead of hanging a GUI app on an impossible password prompt.
+        """
+        if hasattr(os, 'geteuid') and os.geteuid() == 0:
+            return []
+        return ['sudo', '-n']
+
+    def _needs_helper(self, stderr: str) -> bool:
+        s = (stderr or '').lower()
+        return 'password is required' in s or 'a terminal is required' in s
+
     def unload(self) -> bool:
         """
         Unload AppleUSBPrinter. Returns True on success.
@@ -607,7 +627,7 @@ class KextManager:
         self._log(f'Unloading {self.KEXT_ID} ...')
         try:
             result = subprocess.run(
-                ['sudo', 'kextunload', '-b', self.KEXT_ID],
+                self._sudo_prefix() + [self.KEXTUNLOAD, '-b', self.KEXT_ID],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
@@ -615,10 +635,15 @@ class KextManager:
                 self._log('Unloaded successfully.')
                 return True
             else:
-                self._log(
-                    f'kextunload failed (exit {result.returncode}): '
-                    f'{result.stderr.strip()}'
-                )
+                if self._needs_helper(result.stderr):
+                    self._log('Not authorised to unload the printer driver. '
+                              'Run with sudo, or install the one-time helper: '
+                              'python3 tray/usb_helper.py install')
+                else:
+                    self._log(
+                        f'kextunload failed (exit {result.returncode}): '
+                        f'{result.stderr.strip()}'
+                    )
                 self._log('Continuing without kext unload — OUT traffic may be noisy.')
                 return False
         except subprocess.TimeoutExpired:
@@ -639,7 +664,7 @@ class KextManager:
         self._log(f'Reloading {self.KEXT_ID} ...')
         try:
             result = subprocess.run(
-                ['sudo', 'kextload', '-b', self.KEXT_ID],
+                self._sudo_prefix() + [self.KEXTLOAD, '-b', self.KEXT_ID],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
@@ -726,6 +751,12 @@ class GTSConnection:
         '       python3 m20.py --console\n'
         '     Or pass --disable-kext to do this automatically (requires sudo):\n'
         '       sudo python3 m20.py --console --disable-kext\n'
+        '\n'
+        '  Option 3 — Install the one-time USB helper (no sudo afterwards):\n'
+        '       python3 tray/usb_helper.py install\n'
+        '     Adds a password-free sudoers rule for ONLY kextunload/kextload\n'
+        '     of the printer driver, so the app (and menu-bar app) can run\n'
+        '     unprivileged.\n'
         '\n'
         'The driver reloads automatically on USB reconnect.\n'
     )
@@ -1226,7 +1257,7 @@ class GTSConnection:
 
         spl = (hdr
                + _cmd(b'DR', 0)
-               + _cmd(b'MC', 0)
+               + _cmd(b'MC', 0)  # MC: spindle (0=off/diamond drag, 1=rotary on)
                + _cmd(b'VS', DEFAULT_SPEED)
                + _cmd(b'VZ', DEFAULT_SPEED)
                + _cmd(b'PZ', DEFAULT_LIFT)

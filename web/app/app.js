@@ -617,14 +617,15 @@ let pendingCustomFor = null;   // object id awaiting a custom-font load (edit fl
 // keeping its lower-left corner anchored so it doesn't jump when edited.
 async function regenTextObject(obj) {
   const src = obj.source;
-  let data;
-  try { data = await loadFontData(src.font); }
-  catch (e) { toast(e.message, 'warn'); return false; }
   const size = Math.min(80, Math.max(1, src.size || 10));
   const before = strokesBounds(worldStrokes(obj));
-  const r = src.font === 'engrave'
-    ? hersheyTextToStrokes(data, src.text, size, 0, 0)
-    : ttfTextToStrokes(data, src.text, size, 0, 0);
+  let r;
+  try {
+    const data = await loadFontData(src.font);
+    r = src.font === 'engrave'
+      ? hersheyTextToStrokes(data, src.text, size, 0, 0)
+      : ttfTextToStrokes(data, src.text, size, 0, 0);
+  } catch (e) { toast(e.message, 'warn'); return false; }
   for (const w of r.warnings) toast(w, 'warn');
   if (!r.strokes.length) { toast('No engraveable strokes in that text.', 'warn'); return false; }
   obj.baseStrokes = flipStrokesY(r.strokes);   // keep upright in the Y-down machine frame
@@ -790,12 +791,33 @@ async function sendJob() {
 }
 
 let sseToken = null;
-function ensureTelemetry(token) {
+async function ensureTelemetry(token) {
   if (sse && sseToken === token) return;        // already streaming with this token
   if (sse) { sse.close(); sse = null; }
   sseToken = token;
-  sse = new EventSource(`${SERVER}/telemetry?token=${encodeURIComponent(token)}`);
-  sse.onmessage = (ev) => {
+  connectTelemetry(token);
+}
+
+// EventSource can't send an Authorization header, and we never put the durable
+// pairing token in a URL (it'd leak into history/Referer). So mint a single-use,
+// short-lived ticket over an authenticated POST and pass THAT in the query.
+async function connectTelemetry(token) {
+  if (sseToken !== token) return;               // superseded by a newer token
+  let ticket;
+  try {
+    const r = await fetch(`${SERVER}/telemetry/ticket`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) throw new Error(r.statusText);
+    ticket = (await r.json()).ticket;
+  } catch {
+    if (sseToken === token) setTimeout(() => connectTelemetry(token), 3000);
+    return;
+  }
+  if (sseToken !== token) return;
+  const es = new EventSource(`${SERVER}/telemetry?ticket=${encodeURIComponent(ticket)}`);
+  sse = es;
+  es.onmessage = (ev) => {
     let p; try { p = JSON.parse(ev.data); } catch { return; }
     if (p.type !== 'motor') return;
     const mm = (p.value / 100).toFixed(2);
@@ -804,7 +826,13 @@ function ensureTelemetry(token) {
     if (p.axis === 'Z') { $('tz').textContent = mm; }
     if (p.axis === 'E') { $('jobState').textContent = 'running'; }
   };
-  sse.onerror = () => { /* keepalive gaps fire this; let EventSource auto-reconnect */ };
+  es.onerror = () => {
+    // The ticket is single-use, so EventSource's built-in retry would replay a
+    // spent ticket. Take over: close and re-mint a fresh ticket.
+    es.close();
+    if (sse === es) sse = null;
+    if (sseToken === token) setTimeout(() => connectTelemetry(token), 2000);
+  };
 }
 let hx = 0, hy = 0, headVisible = false;
 // A persistent red head dot, rendered in machine coords with the Y-flip so it

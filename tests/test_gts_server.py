@@ -77,9 +77,11 @@ def test_machine_identity(server):
     assert body['profile']['name'] == 'M20'
     assert body['profile']['envelope_mm'] == [100.0, 100.0]
 
-def test_query_param_token_accepted(server):
+def test_query_param_token_rejected(server):
+    # The durable token must never be accepted in a URL (history/Referer leak);
+    # only the Bearer header is honoured. SSE uses single-use tickets instead.
     status, _, _ = _req(server['port'], 'GET', f'/machine?token={TOKEN}')
-    assert status == 200
+    assert status == 401
 
 def test_job_submission_and_state(server):
     gts = build_home_gts()
@@ -120,8 +122,11 @@ def test_no_cors_headers_without_allowlisted_origin(server):
     assert 'Access-Control-Allow-Origin' not in headers
 
 def test_telemetry_sse_stream(server):
+    # Mint a single-use ticket over an authed POST, then open the SSE with it.
+    status, _, body = _req(server['port'], 'POST', '/telemetry/ticket', headers=AUTH)
+    assert status == 200 and body.get('ticket')
     c = http.client.HTTPConnection('127.0.0.1', server['port'], timeout=5)
-    c.request('GET', f'/telemetry?token={TOKEN}')
+    c.request('GET', f"/telemetry?ticket={body['ticket']}")
     r = c.getresponse()
     assert r.status == 200
     assert r.getheader('Content-Type') == 'text/event-stream'
@@ -143,6 +148,30 @@ def test_telemetry_sse_stream(server):
     assert event['axis'] == 'X' and event['value'] == 1234
     assert event['raw'] == '21 4d'   # bytes made JSON-safe
     c.close()
+
+
+def test_telemetry_requires_ticket(server):
+    # No ticket, and the token is not accepted in the URL -> 401.
+    status, _, _ = _req(server['port'], 'GET', '/telemetry')
+    assert status == 401
+    status, _, _ = _req(server['port'], 'GET', f'/telemetry?token={TOKEN}')
+    assert status == 401
+
+
+def test_telemetry_ticket_is_single_use(server):
+    _, _, body = _req(server['port'], 'POST', '/telemetry/ticket', headers=AUTH)
+    ticket = body['ticket']
+    c = http.client.HTTPConnection('127.0.0.1', server['port'], timeout=5)
+    c.request('GET', f'/telemetry?ticket={ticket}')
+    assert c.getresponse().status == 200   # first use redeems it
+    c.close()
+    status, _, _ = _req(server['port'], 'GET', f'/telemetry?ticket={ticket}')
+    assert status == 401                   # second use rejected
+
+
+def test_telemetry_ticket_mint_requires_auth(server):
+    status, _, _ = _req(server['port'], 'POST', '/telemetry/ticket')
+    assert status == 401
 
 
 # ---------------------------------------------------------------------------

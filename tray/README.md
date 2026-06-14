@@ -10,7 +10,7 @@ tray is expected to be revisited; nothing here is load-bearing for the engine.
 
 ## Run
 
-    pip install pystray pillow requests
+    pip install pystray pillow
     python3 tray/gts_tray.py            # starts the server + tray together
 
 ## Menu

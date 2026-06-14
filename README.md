@@ -4,7 +4,7 @@
 
 GratisGraph is an open-source Python driver for Gravograph M20-series contact engraving machines. It talks to the machine directly over raw USB, translating standard G-Code into the machine's native binary protocol (which we call **GTS**, documented from live USB captures and confirmed on hardware). Design in whatever you like — LightBurn, Inkscape, Fusion, anything that exports G-Code — and engrave from macOS, Linux, or Windows.
 
-Confirmed working on the **M20 / M20 Express**, with profiles for the full family sharing the same protocol: **M20 XL, M20 PIX, M20 Jewel / Jewel 2, all M20 IQ variants, M40 / M40G (incl. IQ), M10 Jewel, and IS400 IQ**. Drag and rotary machines only — laser machines use a different driver stack and are out of scope.
+Confirmed working on the **M20 / M20 Express**, with profiles for the full family sharing the same protocol: **M20 XL, M20 PIX, M20 Jewel / Jewel 2, all M20 IQ variants, and M40 / M40G (incl. IQ)**. The **M10 Jewel** and **IS400 IQ** profiles are included but **unverified**: their parameters are read from the vendor's published INF files and have not yet been tested on live hardware. Drag and rotary machines only — laser machines use a different driver stack and are out of scope.
 
 ## Legal
 

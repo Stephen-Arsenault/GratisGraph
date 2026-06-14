@@ -8,7 +8,7 @@ pairing/lockout controls. Version info is read live from the server's
 diagnostics endpoint — never hardcoded — so a support request always
 reflects the user's real setup.
 
-  pip install pystray pillow requests
+  pip install pystray pillow
   python3 tray/gts_tray.py
 
 The tray <-> server unlock works because they share one process: "Unlock"
@@ -16,8 +16,10 @@ is a direct in-process state reset, proof of physical presence. There is
 deliberately no HTTP unlock endpoint.
 """
 import os
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 # Make the repo modules importable when run as tray/gts_tray.py
@@ -25,6 +27,76 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gts_server
 from version import diagnostics
+
+GRATISGRAPH_URL = 'https://gratisgraph.com'
+KOFI_URL = 'https://ko-fi.com/gratisgraph'
+# Origins the local bridge trusts for cross-origin calls from the hosted web
+# app: the custom domain + the Cloudflare Pages preview host.
+DEFAULT_ALLOWED_ORIGINS = [GRATISGRAPH_URL, 'https://gratisgraph.pages.dev']
+
+
+def _set_clipboard(text: str) -> bool:
+    """Copy text to the OS clipboard. macOS pbcopy / Windows clip; best-effort."""
+    try:
+        if sys.platform == 'darwin':
+            subprocess.run(['pbcopy'], input=text.encode('utf-8'), check=True)
+        elif sys.platform.startswith('win'):
+            subprocess.run(['clip'], input=text.encode('utf-16-le'), check=True)
+        else:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+# ── bundle helpers (work both in dev and inside the packaged .app) ────────
+
+def _resource(name: str) -> str:
+    """Locate a bundled resource in dev (tray/resources/) and in the .app
+    (Contents/Resources/)."""
+    if getattr(sys, 'frozen', False):
+        base = os.path.join(os.path.dirname(sys.executable), '..', 'Resources')
+    else:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    return os.path.normpath(os.path.join(base, name))
+
+
+def _configure_bundled_libusb() -> None:
+    """Inside the .app, make pyusb load the libusb-1.0 dylib bundled in
+    Contents/Frameworks instead of relying on a system (Homebrew) copy, so the
+    app is self-contained. No-op when running from source."""
+    if not getattr(sys, 'frozen', False):
+        return
+    dylib = os.path.normpath(os.path.join(
+        os.path.dirname(sys.executable), '..', 'Frameworks', 'libusb-1.0.0.dylib'))
+    if not os.path.exists(dylib):
+        return
+    import ctypes.util as _cu
+    _orig = _cu.find_library
+    def _patched(name):
+        if name in ('usb-1.0', 'libusb-1.0', 'usb'):
+            return dylib
+        return _orig(name)
+    _cu.find_library = _patched
+
+
+def _enable_template_icon() -> None:
+    """Make pystray's macOS status-bar image a *template* image so the system
+    tints it automatically for light/dark menu bars (matching the favicon's
+    prefers-color-scheme behaviour)."""
+    try:
+        from pystray import _darwin
+    except Exception:
+        return
+    if getattr(_darwin.Icon, '_gg_template_patched', False):
+        return
+    _orig = _darwin.Icon._assert_image
+    def _assert_image(self):
+        _orig(self)
+        if self._icon_image is not None:
+            self._icon_image.setTemplate_(True)
+    _darwin.Icon._assert_image = _assert_image
+    _darwin.Icon._gg_template_patched = True
 
 
 # ── Tray logic (headless-testable; no pystray here) ─────────────────────────
@@ -94,55 +166,97 @@ class TrayController:
         webbrowser.open(target)
         return target
 
+    # --- privileged USB helper (scoped sudoers; see usb_helper.py) ---
+
+    def usb_helper_installed(self) -> bool:
+        try:
+            import usb_helper
+            return usb_helper.is_installed()
+        except Exception:
+            return False
+
+    def usb_helper_status(self) -> str:
+        if sys.platform != 'darwin':
+            return 'USB helper: n/a'
+        return 'USB helper: installed' if self.usb_helper_installed() else 'USB helper: not installed'
+
+    def install_usb_helper(self) -> bool:
+        import usb_helper
+        return usb_helper.install()
+
 
 # ── pystray rendering (imported lazily so logic stays testable) ─────────────
 
 def _make_icon_image():
-    from PIL import Image, ImageDraw
-    img = Image.new('RGB', (64, 64), '#1a1a1a')
-    d = ImageDraw.Draw(img)
-    d.rectangle([16, 16, 48, 48], outline='#1a73e8', width=4)
-    d.line([24, 40, 40, 24], fill='#e8710a', width=3)   # a little "engrave" stroke
-    return img
+    """The GratisGraph 'G' for the menu bar (rendered from the favicon by
+    make_icon.py). Falls back to a drawn glyph if the asset is missing."""
+    from PIL import Image
+    try:
+        return Image.open(_resource('menubar_G.png')).convert('RGBA')
+    except Exception:
+        from PIL import ImageDraw
+        img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse([8, 8, 56, 56], outline=(0, 0, 0, 255), width=8)
+        d.rectangle([32, 30, 58, 36], fill=(0, 0, 0, 255))
+        return img
 
 
 def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
     import pystray
     from pystray import MenuItem as Item, Menu
 
+    _configure_bundled_libusb()
+    if sys.platform == 'darwin':
+        _enable_template_icon()
+
     token = gts_server.load_or_create_token()
     state = gts_server.ServerState()
+    origins = DEFAULT_ALLOWED_ORIGINS if allowed_origins is None else allowed_origins
     httpd = gts_server.make_server(port=port, token=token,
-                                   allowed_origins=allowed_origins or [], state=state)
+                                   allowed_origins=origins, state=state)
     ctrl = TrayController(state, token, port)
 
     threading.Thread(target=httpd.serve_forever, daemon=True,
                      name='gts-server').start()
 
-    def versions_submenu():
-        return Menu(*[Item(line, None, enabled=False) for line in ctrl.version_lines()])
-
     def build_menu():
         items = [
             Item(lambda _: f'Pairing code: {ctrl.pairing_code()}',
-                 lambda: _copy(ctrl.pairing_code())),
+                 lambda: _copy(ctrl.pairing_code(), 'Pairing code copied')),
             Item(lambda _: ctrl.machine_status(), None, enabled=False),
-            Item('Versions', versions_submenu()),
-            Item('Copy support snapshot', lambda: _copy(ctrl.support_snapshot())),
+            Item(lambda _: ctrl.usb_helper_status(), None, enabled=False),
+            Item('Share Support Info', lambda: _copy(ctrl.support_snapshot(), 'Support info copied')),
             Menu.SEPARATOR,
+            Item('Install USB helper…', lambda: _install_helper(),
+                 visible=lambda _: sys.platform == 'darwin' and not ctrl.usb_helper_installed()),
             Item('Regenerate pairing code', lambda: ctrl.regenerate_token()),
             Item(lambda _: ctrl.lockout_label(),
                  lambda: ctrl.unlock(),
                  visible=lambda _: ctrl.is_locked()),
-            Item('Open web UI', lambda: ctrl.open_ui()),
+            Item('Open GratisGraph', lambda: ctrl.open_ui(GRATISGRAPH_URL)),
+            Item('Donate…', lambda: webbrowser.open(KOFI_URL)),
             Menu.SEPARATOR,
             Item('Quit', lambda icon: (httpd.shutdown(), icon.stop())),
         ]
         return Menu(*items)
 
-    def _copy(text):
+    def _copy(text, label='Copied to clipboard'):
+        ok = _set_clipboard(text)
         try:
-            icon.notify(text[:200], 'GratisGraph')
+            icon.notify(label if ok else 'Copy failed', 'GratisGraph')
+        except Exception:
+            pass
+
+    def _install_helper():
+        try:
+            ok = ctrl.install_usb_helper()
+            icon.notify('USB helper installed' if ok else 'Install did not activate',
+                        'GratisGraph')
+        except Exception as e:
+            icon.notify(f'Helper install failed: {e}'[:180], 'GratisGraph')
+        try:
+            icon.update_menu()
         except Exception:
             pass
 
@@ -150,8 +264,47 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
                         'GratisGraph', menu=build_menu())
     print(f'GratisGraph tray running. Server http://127.0.0.1:{port}')
     print(f'Pairing code: {token}')
+    print(f'Allowed origins: {origins}')
+
+    def _autoconnect_loop():
+        # The tray owns the machine connection: connect on launch and keep it
+        # live, so the status line reflects the real machine without waiting
+        # for a browser to hit /machine first.
+        while True:
+            try:
+                c = ctrl.state.conn
+                if c is None or getattr(c, 'dev', None) is None:
+                    ctrl.state.ensure_connected()
+                    try:
+                        icon.update_menu()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(4)
+
+    threading.Thread(target=_autoconnect_loop, daemon=True,
+                     name='gts-autoconnect').start()
     icon.run()
 
 
 if __name__ == '__main__':
+    if '--selftest' in sys.argv:
+        # Verify the bundle is self-contained: libusb loads from Frameworks, the
+        # menu-bar asset is present, and the USB helper module imports + reports.
+        _configure_bundled_libusb()
+        import usb.backend.libusb1 as _l
+        be = _l.get_backend()
+        png = _resource('menubar_G.png')
+        ok_png = os.path.exists(png)
+        try:
+            import usb_helper
+            helper = f'OK ({"installed" if usb_helper.is_installed() else "not installed"})'
+            ok_helper = True
+        except Exception as e:
+            helper, ok_helper = f'IMPORT FAILED: {e}', False
+        print('libusb backend:', 'OK' if be else 'FAILED')
+        print('menubar icon  :', 'OK' if ok_png else 'MISSING', png)
+        print('usb_helper    :', helper)
+        sys.exit(0 if (be and ok_png and ok_helper) else 1)
     run()

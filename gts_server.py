@@ -10,13 +10,15 @@ Design notes:
     trivially freezable with PyInstaller.
   - Telemetry is Server-Sent Events, not WebSocket: the stream is one-way,
     EventSource gives browsers auto-reconnect for free, and stdlib can serve
-    it. EventSource cannot set headers, so /telemetry also accepts ?token=.
+    it. EventSource can't set headers, so /telemetry authenticates with a
+    single-use ticket from POST /telemetry/ticket (never a token in the URL).
 
 Security model (a localhost daemon that drives motors is a drive-by target):
   - Binds 127.0.0.1 ONLY. Not configurable.
   - Every endpoint except GET / requires the pairing token, printed at startup
     and stored at ~/.gratisgraph/token (chmod 600).
-    Send as 'Authorization: Bearer <token>' or '?token=<token>'.
+    Send as 'Authorization: Bearer <token>'. The token is never accepted in a
+    query string; SSE uses single-use tickets (POST /telemetry/ticket).
   - Browser origins must be explicitly allowlisted: --allow-origin URL
     (repeatable). No allowlist = no CORS headers = same-machine tools only.
 
@@ -25,7 +27,8 @@ Endpoints:
   GET  /machine     connect if needed; identity + selected profile
   POST /job         raw .m20 bytes -> 202 {"job_id":...}; ?home_first=0|1
   GET  /job/<id>    job state: queued | running | done | error
-  GET  /telemetry   SSE stream of decoded machine packets (JSON per event)
+  POST /telemetry/ticket  mint a single-use SSE ticket (authed)
+  GET  /telemetry   SSE stream of decoded machine packets; auth via ?ticket=
   POST /abort       emergency stop (!1B)
 
 Usage:
@@ -55,6 +58,7 @@ TOKEN_PATH   = Path.home() / '.gratisgraph' / 'token'
 GTS_MAGIC    = b'!MM88;'
 MAX_JOB_SIZE = 8 * 1024 * 1024   # 8 MB — far above any real job
 SSE_KEEPALIVE_S = 15.0
+SSE_TICKET_TTL_S = 30.0   # telemetry ticket lifetime (single-use, short-lived)
 
 # Auth brute-force lockout. Loopback has no per-client identity (everything
 # is 127.0.0.1, including a drive-by page in the user's own browser), so a
@@ -109,6 +113,10 @@ class ServerState:
         self._auth_failures    = 0
         self._auth_locked_until = 0.0
         self._auth_lock = threading.Lock()
+        # short-lived single-use tickets for SSE (EventSource can't send the
+        # Authorization header, and we refuse to put the durable token in a URL)
+        self._tickets: dict = {}
+        self._tickets_lock = threading.Lock()
 
     # --- auth lockout ---
 
@@ -133,6 +141,26 @@ class ServerState:
     def auth_succeeded(self) -> None:
         with self._auth_lock:
             self._auth_failures = 0
+
+    # --- telemetry tickets ---
+
+    def mint_ticket(self) -> str:
+        """Issue a single-use, short-lived ticket for one SSE connection."""
+        t = secrets.token_urlsafe(16)
+        now = time.monotonic()
+        with self._tickets_lock:
+            self._tickets = {k: v for k, v in self._tickets.items() if v > now}
+            self._tickets[t] = now + SSE_TICKET_TTL_S
+        return t
+
+    def redeem_ticket(self, ticket: str) -> bool:
+        """Validate and consume a ticket (single-use)."""
+        if not ticket:
+            return False
+        now = time.monotonic()
+        with self._tickets_lock:
+            expiry = self._tickets.pop(ticket, None)
+        return expiry is not None and expiry > now
 
     # --- connection ---
 
@@ -243,13 +271,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _authed(self) -> bool:
-        supplied = ''
+        # Bearer header only - the durable token must never appear in a URL
+        # (history/logs/Referer). SSE uses single-use tickets instead.
         auth = self.headers.get('Authorization', '')
-        if auth.startswith('Bearer '):
-            supplied = auth[7:].strip()
-        else:
-            qs = parse_qs(urlparse(self.path).query)
-            supplied = (qs.get('token') or [''])[0]
+        if not auth.startswith('Bearer '):
+            return False
+        supplied = auth[7:].strip()
         return bool(supplied) and hmac.compare_digest(supplied, self.token)
 
     def _require_auth(self) -> bool:
@@ -273,6 +300,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(401, {'error': 'missing or invalid pairing token'})
         return False
 
+    def _require_ticket(self) -> bool:
+        qs = parse_qs(urlparse(self.path).query)
+        ticket = (qs.get('ticket') or [''])[0]
+        if self.state.redeem_ticket(ticket):
+            return True
+        self._send_json(401, {'error': 'missing or invalid telemetry ticket'})
+        return False
+
     # ----- methods -----
 
     def do_OPTIONS(self):
@@ -285,6 +320,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Headers',
                          'Authorization, Content-Type')
         self.send_header('Access-Control-Max-Age', '600')
+        # Private Network Access: a public HTTPS origin (gratisgraph.com)
+        # reaching 127.0.0.1 triggers a PNA preflight; grant it explicitly.
+        if self.headers.get('Access-Control-Request-Private-Network') == 'true':
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Content-Length', '0')
         self.end_headers()
 
@@ -300,6 +339,11 @@ class Handler(BaseHTTPRequestHandler):
             }
             self._send_json(200, payload)
             return
+        if path == '/telemetry':
+            # SSE: ticket auth, since EventSource can't send the Bearer header
+            if self._require_ticket():
+                self._handle_telemetry()
+            return
         if not self._require_auth():
             return
         if path == '/machine':
@@ -310,8 +354,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {'error': 'unknown job id'})
             else:
                 self._send_json(200, job)
-        elif path == '/telemetry':
-            self._handle_telemetry()
         else:
             self._send_json(404, {'error': 'not found'})
 
@@ -321,6 +363,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/job':
             self._handle_job()
+        elif path == '/telemetry/ticket':
+            self._send_json(200, {'ticket': self.state.mint_ticket(),
+                                  'ttl_s': SSE_TICKET_TTL_S})
         elif path == '/abort':
             try:
                 self.state.abort()
