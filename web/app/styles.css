@@ -133,6 +133,27 @@ button.ghost { background: transparent; }
 .btn-row { display: flex; gap: 8px; }
 .btn-row button { flex: 1; }
 
+/* donate link (under Send) + download buttons (setup / about modals) */
+.donate-link {
+  text-align: center; font-size: 12px; color: var(--ink-dim);
+  text-decoration: none; padding: 2px; letter-spacing: .01em;
+}
+.donate-link:hover { color: var(--cut); }
+.dl-row { display: flex; gap: 8px; margin: 8px 0; }
+.about-actions { display: flex; gap: 8px; margin-top: 18px; }
+a.dl-btn {
+  flex: 1; text-align: center; text-decoration: none;
+  font-family: var(--ui); font-size: 13px; font-weight: 500;
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 9px 13px; color: var(--ink); background: var(--panel-2);
+  transition: all .12s;
+}
+a.dl-btn:hover { border-color: var(--ink-faint); }
+a.dl-btn.primary { background: var(--cut); border-color: var(--cut); color: #1a0d07; font-weight: 600; }
+a.dl-btn.primary:hover { background: #ff7d55; }
+a.dl-btn.ghost { background: transparent; }
+a.dl-btn.ghost:hover { border-color: var(--cut); color: var(--cut); }
+
 /* ── stage (the bed) ── */
 .stage {
   position: relative;
@@ -339,6 +360,7 @@ input, textarea, .selectable {
 .legal-fonts li { color: var(--ink-dim); padding: 3px 0; border-bottom: 1px solid var(--line); }
 .legal-fonts li:last-child { border-bottom: none; }
 .modal-body code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.modal-body a:not(.dl-btn) { color: var(--cut); text-decoration: underline; text-underline-offset: 2px; }
 
 /* small confirm dialog (delete, etc.) */
 .modal-sm { max-width: 380px; }

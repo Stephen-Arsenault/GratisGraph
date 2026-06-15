@@ -52,30 +52,37 @@ def _set_clipboard(text: str) -> bool:
 # ── bundle helpers (work both in dev and inside the packaged .app) ────────
 
 def _resource(name: str) -> str:
-    """Locate a bundled resource in dev (tray/resources/) and in the .app
-    (Contents/Resources/)."""
+    """Locate a bundled resource across dev (tray/resources/), the macOS .app
+    (Contents/Resources/), and a PyInstaller onefile (sys._MEIPASS)."""
     if getattr(sys, 'frozen', False):
-        base = os.path.join(os.path.dirname(sys.executable), '..', 'Resources')
+        meipass = getattr(sys, '_MEIPASS', None)
+        base = meipass if meipass else os.path.join(
+            os.path.dirname(sys.executable), '..', 'Resources')
     else:
         base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
     return os.path.normpath(os.path.join(base, name))
 
 
 def _configure_bundled_libusb() -> None:
-    """Inside the .app, make pyusb load the libusb-1.0 dylib bundled in
-    Contents/Frameworks instead of relying on a system (Homebrew) copy, so the
-    app is self-contained. No-op when running from source."""
+    """Make pyusb load the libusb shipped inside the frozen app instead of a
+    system copy, so the app is self-contained. Handles the macOS .app (a dylib
+    in Contents/Frameworks) and a PyInstaller onefile (libusb-1.0.dll in
+    sys._MEIPASS). No-op when running from source."""
     if not getattr(sys, 'frozen', False):
         return
-    dylib = os.path.normpath(os.path.join(
-        os.path.dirname(sys.executable), '..', 'Frameworks', 'libusb-1.0.0.dylib'))
-    if not os.path.exists(dylib):
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:                                    # PyInstaller (Windows / Linux)
+        lib = os.path.join(meipass, 'libusb-1.0.dll')
+    else:                                          # py2app (.app, macOS)
+        lib = os.path.normpath(os.path.join(
+            os.path.dirname(sys.executable), '..', 'Frameworks', 'libusb-1.0.0.dylib'))
+    if not os.path.exists(lib):
         return
     import ctypes.util as _cu
     _orig = _cu.find_library
     def _patched(name):
         if name in ('usb-1.0', 'libusb-1.0', 'usb'):
-            return dylib
+            return lib
         return _orig(name)
     _cu.find_library = _patched
 
@@ -223,10 +230,10 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
     def build_menu():
         items = [
             Item(lambda _: f'Pairing code: {ctrl.pairing_code()}',
-                 lambda: _copy(ctrl.pairing_code(), 'Pairing code copied')),
+                 lambda: _copy(ctrl.pairing_code())),
             Item(lambda _: ctrl.machine_status(), None, enabled=False),
             Item(lambda _: ctrl.usb_helper_status(), None, enabled=False),
-            Item('Share Support Info', lambda: _copy(ctrl.support_snapshot(), 'Support info copied')),
+            Item('Share Support Info', lambda: _copy(ctrl.support_snapshot())),
             Menu.SEPARATOR,
             Item('Install USB helper…', lambda: _install_helper(),
                  visible=lambda _: sys.platform == 'darwin' and not ctrl.usb_helper_installed()),
@@ -241,22 +248,16 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
         ]
         return Menu(*items)
 
-    def _copy(text, label='Copied to clipboard'):
-        ok = _set_clipboard(text)
-        try:
-            icon.notify(label if ok else 'Copy failed', 'GratisGraph')
-        except Exception:
-            pass
+    def _copy(text):
+        _set_clipboard(text)   # silent: a clipboard copy is self-evident on paste
 
     def _install_helper():
         try:
-            ok = ctrl.install_usb_helper()
-            icon.notify('USB helper installed' if ok else 'Install did not activate',
-                        'GratisGraph')
-        except Exception as e:
-            icon.notify(f'Helper install failed: {e}'[:180], 'GratisGraph')
+            ctrl.install_usb_helper()
+        except Exception:
+            pass
         try:
-            icon.update_menu()
+            icon.update_menu()   # the 'USB helper: ...' status line reflects the result
         except Exception:
             pass
 
@@ -303,8 +304,22 @@ if __name__ == '__main__':
             ok_helper = True
         except Exception as e:
             helper, ok_helper = f'IMPORT FAILED: {e}', False
+        try:
+            _make_icon_image()
+            import pystray  # noqa: F401 — verify GUI deps survived py2app excludes
+            gui, ok_gui = 'OK', True
+        except Exception as e:
+            gui, ok_gui = f'FAILED: {e}', False
+        try:
+            import hmac, secrets, uuid    # the bits gts_server needs without OpenSSL
+            hmac.compare_digest('x', 'x'); secrets.token_urlsafe(8); uuid.uuid4()
+            crypto, ok_crypto = 'OK', True
+        except Exception as e:
+            crypto, ok_crypto = f'FAILED: {e}', False
         print('libusb backend:', 'OK' if be else 'FAILED')
         print('menubar icon  :', 'OK' if ok_png else 'MISSING', png)
         print('usb_helper    :', helper)
-        sys.exit(0 if (be and ok_png and ok_helper) else 1)
+        print('gui PIL+pystray:', gui)
+        print('crypto (no OpenSSL):', crypto)
+        sys.exit(0 if (be and ok_png and ok_helper and ok_gui and ok_crypto) else 1)
     run()

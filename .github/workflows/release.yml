@@ -1,0 +1,160 @@
+name: Build & release
+
+# Builds both desktop artifacts (PyInstaller can't cross-compile, so each runs
+# on its native runner) and, on a v* tag, attaches them to the GitHub Release —
+# which is what the web app's "Get the app" modal links to (…/releases):
+#   * Windows : GratisGraph.exe   (windows-latest, x64)
+#   * macOS   : GratisGraph.dmg   (macos-latest, arm64 / Apple Silicon)
+#
+# Code signing + notarization are OPTIONAL and OFF until the Apple Developer ID
+# secrets below are added (Developer ID = Ko-fi stretch goal). The macOS job
+# builds an UNSIGNED app until then; the moment MACOS_CERTIFICATE_P12 exists it
+# signs the app and notarizes + staples the DMG automatically — no edit needed.
+#
+# Secrets to add later (Settings -> Secrets and variables -> Actions):
+#   MACOS_CERTIFICATE_P12  base64 of the exported "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PWD  the .p12 export password
+#   MACOS_SIGN_IDENTITY    e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID               Apple ID email used for notarytool
+#   APPLE_TEAM_ID          10-character Apple Team ID
+#   APPLE_APP_PASSWORD     app-specific password for that Apple ID
+
+on:
+  workflow_dispatch:              # manual: Actions tab -> Run workflow
+  push:
+    tags: ['v*']                  # e.g. v0.1.0 -> build + attach to the release
+
+permissions:
+  contents: write                 # needed to upload release assets on a tag
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'   # match macOS; hmac uses HACL* (no OpenSSL)
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pystray pillow pyusb libusb-package
+
+      - name: Build GratisGraph.exe
+        run: pyinstaller tray/gts_tray.spec
+
+      - name: Smoke-test the exe
+        # Exit-code only (console=False -> no captured stdout). A missing-device
+        # libusb result on the runner is expected; the WinUSB driver claim is a
+        # per-machine step, not a build concern.
+        run: dist\GratisGraph.exe --selftest
+        continue-on-error: true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GratisGraph-windows-x64
+          path: dist/GratisGraph.exe
+          if-no-files-found: error
+
+      - name: Attach to release (tagged builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/GratisGraph.exe
+
+  macos:
+    runs-on: macos-latest          # arm64 / Apple Silicon since macos-14
+    env:
+      # Populated from secrets so they can be referenced in `if:` (the secrets
+      # context can't be). Empty until the Developer ID is set up.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+      MACOS_SIGN_IDENTITY:   ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID:              ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID:         ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD:    ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'   # NB: if py2app rejects this build, switch to
+                                   # Homebrew python (brew install python@3.14)
+
+      - name: Install libusb
+        run: brew install libusb    # -> /opt/homebrew/lib (setup_app.py finds it)
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install py2app pyusb pillow pystray \
+            pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-Quartz
+
+      - name: Generate icons (.icns / .ico / menubar png)
+        run: python tray/make_icon.py
+
+      - name: Build .app (py2app, auto-prunes)
+        run: |
+          cd tray
+          python setup_app.py py2app
+
+      - name: Smoke-test the app
+        run: tray/dist/GratisGraph.app/Contents/MacOS/GratisGraph --selftest
+        continue-on-error: true
+
+      # ---- optional: sign the app (only when the cert secret is present) -----
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$MACOS_CERTIFICATE_P12" | base64 -D > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p actions "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p actions "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PWD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain
+
+      - name: Codesign the app
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          codesign --deep --force --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" tray/dist/GratisGraph.app
+          codesign --verify --strict --verbose=2 tray/dist/GratisGraph.app
+
+      # ---- package the DMG (headless-safe; drag-to-Applications layout) ------
+      - name: Build DMG
+        run: |
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE"
+          cp -R tray/dist/GratisGraph.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "GratisGraph" -srcfolder "$STAGE" \
+            -ov -format UDZO GratisGraph.dmg
+
+      # ---- optional: notarize + staple (only when Apple creds are present) ---
+      - name: Notarize and staple the DMG
+        if: env.MACOS_CERTIFICATE_P12 != '' && env.APPLE_ID != ''
+        run: |
+          xcrun notarytool submit GratisGraph.dmg \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple GratisGraph.dmg
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GratisGraph-macos-arm64
+          path: GratisGraph.dmg
+          if-no-files-found: error
+
+      - name: Attach to release (tagged builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GratisGraph.dmg

@@ -760,15 +760,28 @@ function attachDrag() {
   });
 }
 
+function openSetup() { $('setupModal').style.display = ''; }
+
 function refreshSendButton() {
   const token = $('token').value.trim();
-  const ready = mode === 'prepare' && m20 && token && $('machineDot').className.includes('on');
-  $('sendBtn').disabled = !ready;
+  const serverOnline = $('serverDot').className.includes('on');
+  const send = $('sendBtn');
+  if (!serverOnline) {
+    // No local app running (first-time visitor): the primary button becomes the
+    // install CTA, and clicking it opens the "get the app" guide.
+    send.disabled = false;
+    send.textContent = 'Install the app to send';
+  } else {
+    send.textContent = 'Send to machine';
+    const ready = mode === 'prepare' && m20 && token && $('machineDot').className.includes('on');
+    send.disabled = !ready;
+  }
   $('saveBtn').disabled = scene.objects.length === 0;
 }
 
 let sse = null;
 async function sendJob() {
+  if (!$('serverDot').className.includes('on')) { openSetup(); return; }   // no local app yet
   const token = $('token').value.trim();
   $('sendBtn').disabled = true;
   $('jobState').textContent = 'sending…';
@@ -1064,11 +1077,13 @@ function init() {
   wireModal('legalModal', 'legalBtn');
   wireModal('aboutModal', 'aboutBtn');
   wireModal('pairModal', 'pairHelpBtn');
+  wireModal('setupModal', null);   // opened from the Send CTA + the About modal
+  $('aboutGetApp').onclick = (e) => { e.preventDefault(); $('aboutModal').style.display = 'none'; openSetup(); };
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if ($('confirmModal').style.display !== 'none') return;   // the confirm dialog owns Escape while open
     let closedAny = false;
-    for (const id of ['legalModal', 'aboutModal', 'pairModal']) {
+    for (const id of ['legalModal', 'aboutModal', 'pairModal', 'setupModal']) {
       const m = $(id); if (m && m.style.display !== 'none') { m.style.display = 'none'; closedAny = true; }
     }
     if (closedAny) return;

@@ -141,6 +141,7 @@
       </div>
       <button class="ghost" id="prepareBtn" disabled>Prepare for engraving →</button>
       <button class="primary" id="sendBtn" disabled>Send to machine</button>
+      <a class="donate-link" href="https://ko-fi.com/gratisgraph" target="_blank" rel="noopener noreferrer">♥ Support GratisGraph</a>
     </div>
   </aside>
 
@@ -239,6 +240,45 @@
 
       <p class="muted">github.com/Stephen-Arsenault/GratisGraph — issues, ideas, and
       pull requests are all welcome.</p>
+      <div class="about-actions">
+        <a class="dl-btn ghost" href="#" id="aboutGetApp">Get the app</a>
+        <a class="dl-btn primary" href="https://ko-fi.com/gratisgraph" target="_blank" rel="noopener noreferrer">♥ Support the project</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="setupModal" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+    <div class="modal-head">
+      <h2 id="setupTitle">Get GratisGraph running</h2>
+      <button class="modal-close" id="setupClose" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body selectable">
+      <p>This page is the design studio. The actual USB talking to the engraver is
+      done by a tiny companion app that runs on your own computer — install it once,
+      pair this page to it, and you can engrave straight from the browser.</p>
+
+      <h3>1 &middot; Install the companion app</h3>
+      <div class="dl-row">
+        <a class="dl-btn primary" href="https://github.com/Stephen-Arsenault/GratisGraph/releases" target="_blank" rel="noopener noreferrer">macOS (Apple&nbsp;Silicon)</a>
+        <a class="dl-btn ghost" href="https://github.com/Stephen-Arsenault/GratisGraph/releases" target="_blank" rel="noopener noreferrer">Windows</a>
+      </div>
+      <p class="muted" style="font-size:12px">Prefer source? Run <code>python3 gts_server.py</code> from the
+      <a href="https://github.com/Stephen-Arsenault/GratisGraph" target="_blank" rel="noopener noreferrer">repository</a>
+      on macOS, Linux, or Windows.</p>
+
+      <h3>2 &middot; Pair this page</h3>
+      <p>When the app starts it shows a short <strong>pairing code</strong> (in its menu
+      and in the terminal). Paste it into the “pairing code” box and the server dot turns
+      green. You only do this once per browser.</p>
+
+      <h3>3 &middot; Send</h3>
+      <p>Design your plate, hit <em>Prepare</em>, then <em>Send to machine</em>, and press the
+      green button on the engraver to run it.</p>
+
+      <p class="muted">Everything stays on your computer: the app listens only on
+      <code>127.0.0.1</code>, and your designs never leave the browser.</p>
     </div>
   </div>
 </div>

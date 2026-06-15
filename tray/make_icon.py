@@ -4,6 +4,7 @@ make_icon.py — render the GratisGraph "G" (web/app/favicon.svg) into:
   - resources/menubar_G.png   black template silhouette for the menu bar
                               (macOS recolours template images for light/dark)
   - resources/GratisGraph.icns  the .app bundle icon
+  - resources/GratisGraph.ico   the Windows .exe icon (multi-resolution)
 
 macOS only. Uses the system NSImage SVG rasteriser (PyObjC) — no extra deps.
 Run once before building, or whenever the favicon changes:
@@ -79,3 +80,9 @@ for px, label in [(16, '16x16'), (32, '16x16@2x'), (32, '32x32'), (64, '32x32@2x
 subprocess.run(['iconutil', '-c', 'icns', iconset,
                 '-o', os.path.join(RES, 'GratisGraph.icns')], check=True)
 print('wrote resources/GratisGraph.icns')
+
+# ── .ico for the Windows .exe (multi-resolution colour G; Pillow, portable) ──
+master.resize((256, 256), Image.LANCZOS).save(
+    os.path.join(RES, 'GratisGraph.ico'),
+    sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+print('wrote resources/GratisGraph.ico')
