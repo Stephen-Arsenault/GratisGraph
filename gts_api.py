@@ -765,31 +765,40 @@ class GTSConnection:
         """
         Detach any kernel driver from interface 0 and claim it for libusb.
 
-        On macOS the USB Printer class driver (AppleUSBPrinter / DriverKit)
-        holds an exclusive IOKit claim on the interface.  libusb can only
-        detach it when running as root or after the kext has been unloaded.
+        macOS (AppleUSBPrinter / DriverKit) and Linux (usblp) bind a kernel
+        driver to the USB Printer interface; libusb must detach it first, and
+        on macOS that needs root / the kext unloaded (errno 13 otherwise).
 
-        If detach fails with errno 13 (LIBUSB_ERROR_ACCESS) we raise a
-        RuntimeError with a clear actionable message rather than silently
-        continuing with an unclaimed interface — which would cause all
-        subsequent writes to succeed at the libusb layer but be silently
-        discarded before reaching the USB wire.
+        Windows is different: Zadig binds the device to WinUSB, which has no
+        kernel driver to detach. libusb returns NOT_SUPPORTED for the
+        is_kernel_driver_active / detach / set_configuration calls there, so on
+        Windows we skip the detach dance (and tolerate set_configuration being
+        unsupported) and go straight to claiming the interface.
         """
         import usb.core as _uc
-        try:
-            if self.dev.is_kernel_driver_active(0):
-                self.dev.detach_kernel_driver(0)
-                # Verify detach actually worked — on some macOS configurations
-                # detach_kernel_driver() returns without raising but the driver
-                # remains attached.
-                if self.dev.is_kernel_driver_active(0):
-                    raise RuntimeError(self._MACOS_DETACH_ERROR)
-        except _uc.USBError as e:
-            if getattr(e, 'errno', None) == 13 or 'access' in str(e).lower():
-                raise RuntimeError(self._MACOS_DETACH_ERROR) from e
-            raise  # unexpected USB error — propagate unchanged
+        is_windows = platform.system() == 'Windows'
 
-        self.dev.set_configuration(1)
+        if not is_windows:
+            try:
+                if self.dev.is_kernel_driver_active(0):
+                    self.dev.detach_kernel_driver(0)
+                    # Some macOS configs return without raising yet leave the
+                    # driver attached; verify the detach actually took.
+                    if self.dev.is_kernel_driver_active(0):
+                        raise RuntimeError(self._MACOS_DETACH_ERROR)
+            except _uc.USBError as e:
+                if getattr(e, 'errno', None) == 13 or 'access' in str(e).lower():
+                    raise RuntimeError(self._MACOS_DETACH_ERROR) from e
+                raise  # unexpected USB error: propagate unchanged
+
+        # set_configuration is needed on macOS/Linux but is commonly
+        # NOT_SUPPORTED on Windows/WinUSB (the config is already active).
+        try:
+            self.dev.set_configuration(1)
+        except _uc.USBError:
+            if not is_windows:
+                raise
+
         usb_util.claim_interface(self.dev, 0)
 
     # --- Endpoint discovery ---
@@ -802,7 +811,12 @@ class GTSConnection:
         Logs a full endpoint map for diagnostics.
         The M20 may be OUT-only (no IN endpoint); that is handled gracefully.
         """
-        cfg  = self.dev.get_active_configuration()
+        try:
+            cfg = self.dev.get_active_configuration()
+        except Exception:
+            # Windows/WinUSB can reject GET_CONFIGURATION (NOT_SUPPORTED); read
+            # the first configuration descriptor directly (cached, no transfer).
+            cfg = self.dev[0]
         intf = cfg[(0, 0)]
         found_out = None
         found_in  = None
