@@ -10,8 +10,8 @@ Build:
     python3 setup_app.py py2app
 
 Output: tray/dist/GratisGraph.app
-    Drag to /Applications, then add to System Settings -> General ->
-    Login Items to launch at startup.
+    Drag to /Applications. Use the tray's "Start at login" toggle to launch at
+    startup (or add it to System Settings -> General -> Login Items).
 
 Notes:
   - pyusb loads libusb-1.0 via ctypes from the system (Homebrew) path at
@@ -50,6 +50,7 @@ MENUBAR_PNG = os.path.join(HERE, 'resources', 'menubar_G.png')
 # the browser) — those modules are what dragged numpy/etc. into the bundle.
 INCLUDES = [
     'gts_server', 'version', 'gts_api', 'usb', 'usb_helper',
+    'ServiceManagement',   # SMAppService for the "Start at login" toggle (lazy import)
 ]
 
 # Modules nothing in the tray's runtime graph uses; py2app's modulegraph pulls

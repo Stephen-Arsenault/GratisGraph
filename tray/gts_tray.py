@@ -106,6 +106,45 @@ def _enable_template_icon() -> None:
     _darwin.Icon._gg_template_patched = True
 
 
+# Start at login via SMAppService (macOS 13+, packaged .app only). Degrades to
+# a no-op when run from source, on macOS < 13, or if the framework is missing.
+_LOGIN_ENABLED = 1   # SMAppServiceStatusEnabled
+
+
+def _login_item_service():
+    """The SMAppService for this app, or None when unavailable."""
+    if sys.platform != 'darwin' or not getattr(sys, 'frozen', False):
+        return None
+    try:
+        from ServiceManagement import SMAppService
+        return SMAppService.mainAppService()
+    except Exception:
+        return None
+
+
+def _login_item_status():
+    svc = _login_item_service()
+    if svc is None:
+        return None
+    try:
+        return int(svc.status())
+    except Exception:
+        return None
+
+
+def _login_item_set(enable):
+    """Register/unregister the app as a login item. True on success."""
+    svc = _login_item_service()
+    if svc is None:
+        return False
+    try:
+        ok, _err = (svc.registerAndReturnError_(None) if enable
+                    else svc.unregisterAndReturnError_(None))
+        return bool(ok)
+    except Exception:
+        return False
+
+
 # ── Tray logic (headless-testable; no pystray here) ─────────────────────────
 
 class TrayController:
@@ -191,6 +230,17 @@ class TrayController:
         import usb_helper
         return usb_helper.install()
 
+    # --- start at login (SMAppService; packaged .app, macOS 13+) ---
+
+    def login_item_available(self) -> bool:
+        return _login_item_status() is not None
+
+    def login_item_enabled(self) -> bool:
+        return _login_item_status() == _LOGIN_ENABLED
+
+    def set_login_item(self, enable: bool) -> bool:
+        return _login_item_set(enable)
+
 
 # ── pystray rendering (imported lazily so logic stays testable) ─────────────
 
@@ -242,6 +292,9 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
                  visible=lambda _: ctrl.is_locked()),
             Item('Open GratisGraph', lambda: ctrl.open_ui(GRATISGRAPH_URL)),
             Item('Donate…', lambda: webbrowser.open(KOFI_URL)),
+            Item('Start at login', lambda: _toggle_login(),
+                 checked=lambda _: ctrl.login_item_enabled(),
+                 visible=lambda _: ctrl.login_item_available()),
             Menu.SEPARATOR,
             Item('Quit', lambda icon: (httpd.shutdown(), icon.stop())),
         ]
@@ -249,6 +302,13 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
 
     def _copy(text):
         _set_clipboard(text)   # silent: a clipboard copy is self-evident on paste
+
+    def _toggle_login():
+        ctrl.set_login_item(not ctrl.login_item_enabled())
+        try:
+            icon.update_menu()
+        except Exception:
+            pass
 
     def _install_helper():
         try:
@@ -315,10 +375,19 @@ if __name__ == '__main__':
             crypto, ok_crypto = 'OK', True
         except Exception as e:
             crypto, ok_crypto = f'FAILED: {e}', False
+        if sys.platform == 'darwin':
+            try:
+                from ServiceManagement import SMAppService  # noqa: F401 — login-item toggle
+                login, ok_login = 'OK', True
+            except Exception as e:
+                login, ok_login = f'FAILED: {e}', False
+        else:
+            login, ok_login = 'n/a', True
         print('libusb backend:', 'OK' if be else 'FAILED')
         print('menubar icon  :', 'OK' if ok_png else 'MISSING', png)
         print('usb_helper    :', helper)
         print('gui PIL+pystray:', gui)
         print('crypto (no OpenSSL):', crypto)
-        sys.exit(0 if (be and ok_png and ok_helper and ok_gui and ok_crypto) else 1)
+        print('login item (SMAppService):', login)
+        sys.exit(0 if (be and ok_png and ok_helper and ok_gui and ok_crypto and ok_login) else 1)
     run()
