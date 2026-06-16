@@ -229,11 +229,10 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
 
     def build_menu():
         items = [
-            Item(lambda _: f'Pairing code: {ctrl.pairing_code()}',
-                 lambda: _copy(ctrl.pairing_code())),
+            Item('Copy Pairing Code', lambda: _copy(ctrl.pairing_code())),
             Item(lambda _: ctrl.machine_status(), None, enabled=False),
             Item(lambda _: ctrl.usb_helper_status(), None, enabled=False),
-            Item('Share Support Info', lambda: _copy(ctrl.support_snapshot())),
+            Item('Copy Support Info', lambda: _copy(ctrl.support_snapshot())),
             Menu.SEPARATOR,
             Item('Install USB helper…', lambda: _install_helper(),
                  visible=lambda _: sys.platform == 'darwin' and not ctrl.usb_helper_installed()),
