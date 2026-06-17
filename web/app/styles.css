@@ -251,6 +251,7 @@ a.dl-btn.ghost:hover { border-color: var(--cut); color: var(--cut); }
   font-family: var(--mono); color: var(--ink-dim);
 }
 .pair-help:hover { color: var(--cut); border-color: var(--cut); }
+.pair-warn { font-size: 11.5px; line-height: 1.35; color: #e0564f; padding: 2px 2px 0; }
 .pair-bar .pair-done { width: 100%; }
 
 /* true-scale (1:1) mode — bed sized in real mm; wrapper scrolls if larger than view.

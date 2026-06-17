@@ -106,6 +106,43 @@ def _enable_template_icon() -> None:
     _darwin.Icon._gg_template_patched = True
 
 
+def _enable_left_click_menu() -> None:
+    """On Windows, open the context menu on a LEFT click too. pystray's win32
+    backend shows the menu only on right-click (WM_RBUTTONUP); this mirrors that
+    same popup logic onto WM_LBUTTONUP so either button works. No-op off
+    Windows (macOS/Linux already open the menu on a normal click)."""
+    if not sys.platform.startswith('win'):
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        from pystray import _win32
+        win32 = _win32.win32
+    except Exception:
+        return
+    if getattr(_win32.Icon, '_gg_leftclick_patched', False):
+        return
+
+    def _on_notify(self, wparam, lparam):
+        if self._menu_handle and lparam in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP):
+            # TrackPopupMenuEx misbehaves unless our systray window is foreground
+            win32.SetForegroundWindow(self._hwnd)
+            point = wintypes.POINT()
+            win32.GetCursorPos(ctypes.byref(point))
+            hmenu, descriptors = self._menu_handle
+            index = win32.TrackPopupMenuEx(
+                hmenu,
+                win32.TPM_RIGHTALIGN | win32.TPM_BOTTOMALIGN | win32.TPM_RETURNCMD,
+                point.x, point.y, self._menu_hwnd, None)
+            if index > 0:
+                descriptors[index - 1](self)
+        elif lparam == win32.WM_LBUTTONUP:
+            self()   # no menu registered — fall back to the default action
+
+    _win32.Icon._on_notify = _on_notify
+    _win32.Icon._gg_leftclick_patched = True
+
+
 # Start at login via SMAppService (macOS 13+, packaged .app only). Degrades to
 # a no-op when run from source, on macOS < 13, or if the framework is missing.
 _LOGIN_ENABLED = 1   # SMAppServiceStatusEnabled
@@ -266,6 +303,8 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
     _configure_bundled_libusb()
     if sys.platform == 'darwin':
         _enable_template_icon()
+    elif sys.platform.startswith('win'):
+        _enable_left_click_menu()
 
     token = gts_server.load_or_create_token()
     state = gts_server.ServerState()
@@ -281,7 +320,8 @@ def run(port: int = gts_server.DEFAULT_PORT, allowed_origins=None):
         items = [
             Item('Copy Pairing Code', lambda: _copy(ctrl.pairing_code())),
             Item(lambda _: ctrl.machine_status(), None, enabled=False),
-            Item(lambda _: ctrl.usb_helper_status(), None, enabled=False),
+            Item(lambda _: ctrl.usb_helper_status(), None, enabled=False,
+                 visible=lambda _: sys.platform == 'darwin'),
             Item('Copy Support Info', lambda: _copy(ctrl.support_snapshot())),
             Menu.SEPARATOR,
             Item('Install USB helper…', lambda: _install_helper(),

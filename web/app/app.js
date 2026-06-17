@@ -907,12 +907,44 @@ function showPairingField(show) {
   if (!wrap || !done) return;
   wrap.style.display = show ? '' : 'none';
   done.style.display = show ? 'none' : '';
+  if (!show) showPairWarn('');            // paired — clear any earlier warning
 }
 function unpair() {
   try { localStorage.removeItem('gg-token'); } catch {}
   $('token').value = '';
+  showPairWarn('');
   showPairingField(true);
   pollMachine();
+}
+
+// The pairing code is secrets.token_urlsafe(24): exactly 32 URL-safe base64
+// chars ([A-Za-z0-9_-]). The field is masked, so a wrong paste (e.g. an error
+// message copied by mistake) is invisible — validate the shape and say what's
+// wrong, instead of letting it silently fail later as a "rejected" code.
+const PAIR_TOKEN_RE = /^[A-Za-z0-9_-]{32}$/;
+function tokenShapeIssue(value) {
+  if (!value) return '';                        // empty handled elsewhere
+  if (PAIR_TOKEN_RE.test(value)) return '';     // looks valid
+  if (/\s/.test(value)) return 'it has spaces in it — looks like other text got pasted by mistake';
+  if (/[^A-Za-z0-9_-]/.test(value)) return 'it contains characters a code never has';
+  return `it's ${value.length} character${value.length === 1 ? '' : 's'}, but a code is exactly 32`;
+}
+function showPairWarn(msg) {
+  const el = $('pairWarn');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.display = msg ? '' : 'none';
+}
+// Returns true when the field is empty or holds a plausibly-shaped code.
+function validatePairInput() {
+  const v = $('token').value.trim();
+  const issue = tokenShapeIssue(v);
+  if (v && issue) {
+    showPairWarn(`That doesn't look like a pairing code — ${issue}. Re-copy it from the tray's “Copy Pairing Code”.`);
+    return false;
+  }
+  showPairWarn('');
+  return true;
 }
 
 // ── theme ──
@@ -1050,7 +1082,11 @@ function init() {
   $('newSceneBtn').onclick = newSceneAction;
   $('delObjBtn').onclick = () => requestDelete(selectedId);
   // prepareBtn click handler is set in toMode() since it toggles
-  $('token').addEventListener('input', () => { pollMachine(); refreshSendButton(); });
+  $('token').addEventListener('input', () => {
+    if (validatePairInput()) pollMachine();   // only hit the server for a plausible code
+    else setMachine('rejected');              // bad shape — reflect it in the status pill
+    refreshSendButton();
+  });
   $('trueScale').addEventListener('change', (e) => {
     $('bed').classList.toggle('true-scale', e.target.checked);
     document.querySelector('.bed-wrap').classList.toggle('true-scale', e.target.checked);
