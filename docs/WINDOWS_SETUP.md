@@ -8,21 +8,21 @@ and it isn't code-signed yet, so Windows will show a couple of "are you sure"
 prompts along the way. None of them mean anything is wrong — this guide walks you
 past each one. Feedback from real Windows setups is very welcome (see the end).
 
-You can run it two ways:
+This guide assumes you're connecting a Gravograph M20-series engraver — that's what
+GratisGraph is for. There are four parts: get the app (Section 2), do the one-time
+USB driver step so the app can talk to the machine (Section 3), pair the app with
+the website (Section 4), and send a job (Section 5).
 
-- **Just the app + website** (no machine needed) — launch it, open the site, pair
-  them. Good for checking the basics work and the interface makes sense.
-- **The full thing** (with an M20 on USB) — adds one extra one-time driver step
-  (Section 3) so the app can talk to the machine.
+(You *can* run the app and website on their own, just to look around, by skipping
+Section 3 — but the rest of this guide assumes a machine is attached.)
 
 ---
 
 ## 1. What you'll need
 
+- A Gravograph M20-series engraver on a USB cable.
 - Windows 10 or 11, 64-bit.
-- A few minutes. Admin rights if you'll connect a machine (for the one-time
-  driver step).
-- *Optional:* a Gravograph M20-series engraver on a USB cable.
+- A few minutes, and **admin rights** for the one-time driver step (Section 3).
 
 ---
 
@@ -43,9 +43,10 @@ the app; closing it from its menu quits.
 
 ---
 
-## 3. One-time USB driver step — *only if you're connecting a machine*
+## 3. One-time USB driver step
 
-**Skip this section if you're just trying the app and website.**
+This is a required one-time step so the app can talk to your machine over USB.
+*(Skippable only if you're running app-only with no machine attached.)*
 
 ### Why this is needed
 
@@ -77,6 +78,27 @@ last step below.
 7. Click **Replace Driver** (or **Install Driver**) and wait for the success
    message. Done.
 
+Here's what those steps look like:
+
+Zadig isn't signed either, so you'll see SmartScreen for it too — **More info → Run anyway:**
+
+![Zadig's own SmartScreen prompt](images/windows/zadig-smartscreen.png)
+
+The key screen — device **`FFFD 0001`** selected, target driver set to **WinUSB**, then **Replace Driver:**
+
+![Zadig with the FFFD 0001 device selected and WinUSB as the target driver](images/windows/zadig-replace-driver.png)
+
+It installs in a few seconds, then reports success:
+
+![Zadig installing the driver](images/windows/zadig-installing.png)
+
+![Zadig reports the driver was installed successfully](images/windows/zadig-success.png)
+
+You can confirm it took in **Device Manager** — the device's **Driver** tab shows
+provider **libwdi** (WinUSB) bound to `USB\VID_FFFD&PID_0001`:
+
+![Device Manager showing the WinUSB driver bound to the M20](images/windows/device-manager-winusb.png)
+
 ### To undo it later
 
 Open **Device Manager**, find the M20 (look under "Universal Serial Bus devices"),
@@ -94,15 +116,35 @@ printer driver.
    tray **G → Copy Pairing Code**, then paste that code into the "pairing code"
    box on the website. The server dot turns green. You only do this once per
    browser.
-4. If a machine is connected (and you did Section 3), the tray menu's status line
-   should show it — something like **`Machine: M20 (0x0204)`.**
+4. With the machine powered on, the tray menu's status line should show it —
+   something like **`Machine: M20 (0x0204)`.**
+
+The tray **G** menu is where the pairing code lives (plus status, regenerate, and donate):
+
+![The GratisGraph tray menu](images/windows/tray-menu.png)
+
+The first time the site reaches the local app, your browser may ask whether
+**gratisgraph.com** can *"access other apps and services on this device"* — click
+**Allow.** That's the browser's name for letting the page reach the local helper;
+without it, the site can't see the app and will report it as offline.
+
+![Browser prompt: gratisgraph.com wants to access other apps and services — click Allow](images/windows/browser-local-access.png)
 
 If the website says the server is offline, it just means the app isn't running —
 launch `GratisGraph.exe` and refresh.
 
+### What it looks like
+
+Once paired, this is the app. It has a light and a dark theme — toggle with the
+control at the top-right:
+
+![GratisGraph web app, light theme](images/windows/webapp-light.png)
+
+![GratisGraph web app, dark theme](images/windows/webapp-dark.png)
+
 ---
 
-## 5. Send a job (with a machine)
+## 5. Send a job
 
 1. On the website, create or preview a design, hit **Prepare**, then
    **Send to machine.**
